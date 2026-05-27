@@ -16,10 +16,12 @@ export default function Home() {
           </p>
         </div>
         <div className="flex items-center justify-center gap-3">
-          <Link href="/studio" className="btn btn-primary">Enter Studio →</Link>
-          <a href="https://we-are-glo.com" className="btn btn-ghost">About Glo</a>
+          <Link href="/sign-up" className="btn btn-primary">Get started →</Link>
+          <Link href="/sign-in" className="btn btn-ghost">Sign in</Link>
         </div>
-        <p className="text-xs text-ink-500">Auth wiring up next sprint — open access for now.</p>
+        <p className="text-xs text-ink-500">
+          Closed beta · <a href="https://we-are-glo.com" className="text-ink-300 hover:text-cy-300">About Glo</a>
+        </p>
       </div>
     </div>
   );
