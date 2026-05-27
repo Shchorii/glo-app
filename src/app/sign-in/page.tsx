@@ -37,7 +37,7 @@ function SignInForm() {
       </div>
       <div>
         <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Password</label>
-        <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)}
+        <input type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)}
           className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none focus:ring-2 focus:ring-cy-400/20 placeholder-ink-500"
           placeholder="••••••••" />
       </div>
