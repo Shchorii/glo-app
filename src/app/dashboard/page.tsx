@@ -16,8 +16,11 @@ export default function DashboardPage() {
       <div>
         <p className="chip mb-3">Dashboard · M3</p>
         <h1 className="text-2xl md:text-3xl font-semibold text-ink-50 tracking-tight">Performance</h1>
-        <p className="text-ink-400 mt-1.5 text-sm">
-          Last 14 days · <span className="text-ink-200">{dummyCampaign.name}</span>
+        <p className="text-ink-400 mt-1.5 text-sm flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span>Last 14 days · <span className="text-ink-200">{dummyCampaign.name}</span></span>
+          <a href={`/campaigns/${dummyCampaign.id}/preview`} className="inline-flex items-center gap-1 text-cy-300 hover:text-cy-200 text-[13px]">
+            See it on the streets →
+          </a>
         </p>
       </div>
 
