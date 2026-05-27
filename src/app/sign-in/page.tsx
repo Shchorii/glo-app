@@ -18,10 +18,23 @@ function SignInForm() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true); setError(null);
+
+    // Try owner-bypass login first (single-user demo gate)
+    const ownerRes = await fetch("/api/owner-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (ownerRes.ok) {
+      router.push(nextUrl);
+      return;
+    }
+
+    // Fall back to Better-Auth (DB-backed)
     const res = await signIn.email({ email, password });
     setLoading(false);
     if (res?.error) {
-      setError(res.error.message || "Couldn't sign in");
+      setError(res.error.message || "Invalid credentials");
       return;
     }
     router.push(nextUrl);
@@ -60,9 +73,6 @@ export default function SignInPage() {
           <Suspense fallback={<div className="text-sm text-ink-400">Loading...</div>}>
             <SignInForm />
           </Suspense>
-          <p className="text-sm text-ink-400 mt-5 text-center">
-            New here? <Link href="/sign-up" className="text-cy-300 hover:text-cy-200">Create an account</Link>
-          </p>
         </div>
       </div>
     </div>

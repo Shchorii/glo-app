@@ -7,10 +7,9 @@ export async function proxy(req: NextRequest) {
   if (!PROTECTED.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
     return NextResponse.next();
   }
-
-  // Check session cookie (better-auth sets `better-auth.session_token`)
+  const ownerCookie = req.cookies.get("glo-owner");
   const session = req.cookies.get("better-auth.session_token");
-  if (!session) {
+  if (!ownerCookie && !session) {
     const url = req.nextUrl.clone();
     url.pathname = "/sign-in";
     url.searchParams.set("next", pathname);
