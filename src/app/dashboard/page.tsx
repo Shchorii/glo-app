@@ -1,4 +1,5 @@
 import { dummyMetrics, dummyCampaign, SURFACE_META, fmtCents, fmtInt, fmtPct } from "@/lib/dummy-data";
+import { LiveImpressionsCounter } from "@/components/LiveImpressionsCounter";
 import { TrendingUp, MousePointerClick, Eye, DollarSign, Monitor, Tv } from "lucide-react";
 
 export default function DashboardPage() {
@@ -19,6 +20,9 @@ export default function DashboardPage() {
           Last 8 days · <span className="text-ink-200">{dummyCampaign.name}</span>
         </p>
       </div>
+
+      {/* Live ticker */}
+      <LiveImpressionsCounter start={m.totals.impressions} ratePerMinute={14} />
 
       {/* KPI tiles */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
