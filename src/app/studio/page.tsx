@@ -3,11 +3,11 @@ import { Upload, Link2, Sparkles, Wand2 } from "lucide-react";
 
 export default function StudioPage() {
   return (
-    <div className="max-w-6xl mx-auto px-8 py-10">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-10">
       <div className="flex items-baseline justify-between mb-8">
         <div>
           <p className="chip mb-3">Studio · M1</p>
-          <h1 className="text-3xl font-semibold text-ink-50 tracking-tight">Creative Studio</h1>
+          <h1 className="text-2xl md:text-3xl font-semibold text-ink-50 tracking-tight">Creative Studio</h1>
           <p className="text-ink-400 mt-2">Bring a creative in. We&apos;ll remix it for every surface.</p>
         </div>
       </div>
@@ -23,7 +23,7 @@ export default function StudioPage() {
           <Wand2 size={18} className="text-lime-400" />
           <h2 className="text-lg font-medium text-ink-100">Recent jobs</h2>
         </div>
-        <div className="card p-10 text-center">
+        <div className="card p-6 md:p-10 text-center">
           <p className="text-ink-400 text-sm">No creatives yet. Pick a source above to get started.</p>
         </div>
       </div>
@@ -41,7 +41,7 @@ function SourceCard({ href, icon: Icon, title, desc, accent, badge }: {
     : "group-hover:shadow-glow-lime group-hover:border-lime-400/40";
   return (
     <Link href={href} className="group">
-      <div className={`card p-6 h-full transition-all ${accentClasses} border-line-800`}>
+      <div className={`card p-5 md:p-6 h-full transition-all ${accentClasses} border-line-800`}>
         <div className="flex items-center justify-between mb-5">
           <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
             accent === "cy" ? "bg-cy-400/10 text-cy-300" : "bg-lime-400/10 text-lime-300"
