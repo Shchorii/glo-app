@@ -17,16 +17,16 @@ export default function DashboardPage() {
         <p className="chip mb-3">Dashboard · M3</p>
         <h1 className="text-2xl md:text-3xl font-semibold text-ink-50 tracking-tight">Performance</h1>
         <p className="text-ink-400 mt-1.5 text-sm">
-          Last 8 days · <span className="text-ink-200">{dummyCampaign.name}</span>
+          Last 14 days · <span className="text-ink-200">{dummyCampaign.name}</span>
         </p>
       </div>
 
       {/* Live ticker */}
-      <LiveImpressionsCounter start={m.totals.impressions} ratePerMinute={14} />
+      <LiveImpressionsCounter start={m.totals.impressions} ratePerMinute={9} />
 
       {/* KPI tiles */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-        <KpiTile icon={Eye}                label="Impressions" value={fmtInt(m.totals.impressions)} sub="+18% vs week 1" tone="cy" />
+        <KpiTile icon={Eye}                label="Impressions" value={fmtInt(m.totals.impressions)} sub="+8% vs week 1" tone="cy" />
         <KpiTile icon={TrendingUp}         label="Completion"  value={fmtPct(completionRate, 1)}    sub={`${fmtInt(m.totals.completions)} VCRs`} tone="lime" />
         <KpiTile icon={MousePointerClick}  label="CTR (CTV)"   value={fmtPct(ctr, 2)}               sub={`${m.totals.clicks} clicks`} tone="cy" />
         <KpiTile icon={DollarSign}         label="Spent"       value={fmtCents(m.totals.spentCents)} sub={`${fmtCents(m.totals.ecpmCents)} eCPM`} tone="lime" />
@@ -66,21 +66,21 @@ export default function DashboardPage() {
         {/* 8-day timeline */}
         <section className="card p-5 md:p-6">
           <h2 className="text-sm font-medium text-ink-100 mb-4">
-            <span className="text-ink-400">Last 8 days · daily impressions</span>
+            <span className="text-ink-400">Last 14 days · daily impressions</span>
           </h2>
-          <div className="flex items-end justify-between gap-1.5 md:gap-2 h-32">
+          <div className="flex items-end justify-between gap-1 md:gap-1.5 h-32">
             {m.timeline.map((d) => {
               const h = (d.impressions / maxTimeline) * 100;
               const isFri = d.label === "Fri";
               return (
                 <div key={d.date} className="flex-1 flex flex-col items-center gap-1.5">
-                  <div className="text-[9px] text-ink-500 tabular-nums">{(d.impressions / 1000).toFixed(1)}k</div>
+                  <div className="text-[9px] text-ink-500 tabular-nums hidden sm:block">{(d.impressions / 1000).toFixed(1)}k</div>
                   <div
                     className={`w-full rounded-t ${isFri ? "bg-gradient-to-t from-lime-500 to-lime-300" : "bg-gradient-to-t from-cy-600 to-cy-400"}`}
                     style={{ height: `${h}%`, minHeight: 8 }}
                     title={`${d.date}: ${fmtInt(d.impressions)} impressions`}
                   />
-                  <div className="text-[10px] text-ink-400">{d.label}</div>
+                  <div className="text-[9px] sm:text-[10px] text-ink-400"><span className="sm:hidden">{d.label[0]}</span><span className="hidden sm:inline">{d.label}</span></div>
                 </div>
               );
             })}

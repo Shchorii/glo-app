@@ -19,7 +19,7 @@ export const dummyCreatives = [
     durationSeconds: 15,
     thumbnailUrl: "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=400&q=70",
     status: "ready" as const,
-    createdAt: new Date("2026-05-19T16:00:00Z").getTime(),
+    createdAt: new Date("2026-05-13T16:00:00Z").getTime(),
   },
   {
     id: "cre_jp_friday_v2",
@@ -33,7 +33,7 @@ export const dummyCreatives = [
     status: "ready" as const,
     parentCreativeId: "cre_jp_friday_v1",
     metadata: { model: "seedance-v1-pro", provider: "fal" },
-    createdAt: new Date("2026-05-19T17:30:00Z").getTime(),
+    createdAt: new Date("2026-05-13T17:30:00Z").getTime(),
   },
 ];
 
@@ -44,10 +44,10 @@ export const dummyCampaign = {
   status: "live" as const,
   surfaces: ["dooh", "ctv"] as Surface[],
   budgetCents: 150000,        // $1,500
-  spentCents: 118400,         // 79% of budget
-  dailyCapCents: 21500,       // ~$215/day cap
-  startsAt: new Date("2026-05-20T00:00:00Z").getTime(),
-  endsAt:   new Date("2026-06-03T00:00:00Z").getTime(),
+  spentCents: 118400,         // 79% of budget (~$84.57/day across 14 days)
+  dailyCapCents: 11000,       // ~$110/day cap (down from $215)
+  startsAt: new Date("2026-05-14T00:00:00Z").getTime(),
+  endsAt:   new Date("2026-06-04T00:00:00Z").getTime(),  // 21-day campaign, 7 days left
   targeting: {
     neighborhoods: ["Williamsburg", "Bushwick", "Greenpoint"],
     blocks: [
@@ -59,7 +59,7 @@ export const dummyCampaign = {
     ],
     dayparts: ["evening", "late-night"],
   },
-  createdAt: new Date("2026-05-19T19:00:00Z").getTime(),
+  createdAt: new Date("2026-05-13T19:00:00Z").getTime(),
 };
 
 export type Metrics = {
@@ -90,15 +90,22 @@ export const dummyMetrics: Metrics = {
     { name: "Bushwick",     impressions: 28900, completionRate: 0.692, spentCents: 41800 },
     { name: "Greenpoint",   impressions: 16325, completionRate: 0.712, spentCents: 22400 },
   ],
+  // 14-day window, May 14–27, 2026. Two Fridays (15, 22) peak; weekends carry.
   timeline: [
-    { date: "2026-05-20", label: "Wed", impressions:  5_240 },
-    { date: "2026-05-21", label: "Thu", impressions:  7_810 },
-    { date: "2026-05-22", label: "Fri", impressions: 14_220 },
-    { date: "2026-05-23", label: "Sat", impressions: 15_150 },
-    { date: "2026-05-24", label: "Sun", impressions: 12_820 },
-    { date: "2026-05-25", label: "Mon", impressions:  9_200 },
-    { date: "2026-05-26", label: "Tue", impressions:  9_180 },
-    { date: "2026-05-27", label: "Wed", impressions: 10_025 },
+    { date: "2026-05-14", label: "Thu", impressions:  2_810 },
+    { date: "2026-05-15", label: "Fri", impressions:  8_120 },
+    { date: "2026-05-16", label: "Sat", impressions:  9_240 },
+    { date: "2026-05-17", label: "Sun", impressions:  6_820 },
+    { date: "2026-05-18", label: "Mon", impressions:  4_410 },
+    { date: "2026-05-19", label: "Tue", impressions:  4_780 },
+    { date: "2026-05-20", label: "Wed", impressions:  4_920 },
+    { date: "2026-05-21", label: "Thu", impressions:  5_180 },
+    { date: "2026-05-22", label: "Fri", impressions:  9_410 },
+    { date: "2026-05-23", label: "Sat", impressions:  9_915 },
+    { date: "2026-05-24", label: "Sun", impressions:  6_745 },
+    { date: "2026-05-25", label: "Mon", impressions:  4_610 },
+    { date: "2026-05-26", label: "Tue", impressions:  4_785 },
+    { date: "2026-05-27", label: "Wed", impressions:  1_900 }, // today, partial
   ],
   topBlocks: [
     { neighborhood: "Williamsburg", corner: "Bedford & N 7th",         surface: "dooh", impressions: 9_420 },
