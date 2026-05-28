@@ -89,7 +89,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen md:flex">
       {/* MOBILE — top bar */}
       <header className="md:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-bg-950/80 backdrop-blur border-b border-line-900">
-        <Link href="/" className="flex items-center"><GloMark size={26} /></Link>
+        <Link href="/" className="flex items-center"><GloMark size={26} motion="spin" /></Link>
         <button
           type="button"
           aria-label="Open menu"
@@ -117,7 +117,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         aria-hidden={!drawerOpen}
       >
         <div className="flex items-center justify-between px-5 py-5 border-b border-line-900">
-          <Link href="/" onClick={() => setDrawerOpen(false)}><GloMark size={30} /></Link>
+          <Link href="/" onClick={() => setDrawerOpen(false)}><GloMark size={30} motion="spin" /></Link>
           <button
             type="button"
             aria-label="Close menu"
@@ -138,7 +138,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* DESKTOP — persistent sidebar */}
       <aside className="hidden md:flex md:flex-col w-60 border-r border-line-900 bg-bg-900/40 backdrop-blur-sm shrink-0">
         <div className="px-6 py-6 border-b border-line-900">
-          <Link href="/"><GloMark size={32} /></Link>
+          <Link href="/"><GloMark size={32} motion="spin" /></Link>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1">
           <NavItems pathname={pathname} />

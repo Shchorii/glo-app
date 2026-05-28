@@ -66,7 +66,7 @@ export default function SignInPage() {
   return (
     <div className="min-h-screen flex items-center justify-center px-6">
       <div className="w-full max-w-sm">
-        <Link href="/" className="flex justify-center mb-8"><GloMark size={36} /></Link>
+        <Link href="/" className="flex justify-center mb-8"><GloMark size={36} motion="assemble" /></Link>
         <div className="card p-7">
           <h1 className="text-xl font-semibold text-ink-50 mb-1">Sign in</h1>
           <p className="text-sm text-ink-400 mb-6">Welcome back to your campaigns.</p>

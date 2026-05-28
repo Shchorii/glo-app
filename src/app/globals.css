@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Baloo+2:wght@700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -71,4 +71,62 @@
   .chip-lime { background: rgba(190,242,100,0.08); color: #D1F574; border-color: rgba(190,242,100,0.2); }
 
   .hairline { background-image: linear-gradient(90deg, transparent, rgba(41,53,81,1) 20%, rgba(41,53,81,1) 80%, transparent); height: 1px; }
+}
+
+/* ===================== Animated Glo wordmark ===================== */
+.glo-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.015em;
+  font-family: 'Baloo 2', system-ui, sans-serif;
+  font-weight: 800;
+  line-height: 1;
+  color: #F2EFE6;
+  user-select: none;
+}
+.glo-logo .glo-ltr { display: inline-block; transform-origin: center 60%; }
+.glo-logo .glo-l { margin: 0 -0.02em; }
+.glo-logo .glo-o {
+  position: relative;
+  width: 0.92em; height: 0.92em;
+  display: inline-block;
+  transform-origin: center;
+  margin-left: 0.04em;
+}
+.glo-logo .glo-o svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.glo-ring-outer { fill: none; stroke: #56585A; stroke-width: 6; }
+.glo-ring-mid   { fill: none; stroke: #9B9B97; stroke-width: 8; }
+.glo-ring-dash  { fill: none; stroke: #22D3EE; stroke-width: 3; stroke-dasharray: 30 220; stroke-linecap: round; opacity: 0; }
+.glo-core       { fill: #F9C36B; }
+
+/* lockup with tagline */
+.glo-lockup { display: inline-flex; flex-direction: column; align-items: center; gap: 0.32em; }
+.glo-tagline {
+  font-family: 'Inter', system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-weight: 600;
+  color: #6B7280;
+  white-space: nowrap;
+}
+
+/* --- motion: assemble (plays once on mount) --- */
+.glo-m-assemble .glo-g    { animation: gloAsmG .65s cubic-bezier(.2,.7,.2,1) both; }
+.glo-m-assemble .glo-l    { animation: gloAsmL .65s cubic-bezier(.2,.7,.2,1) .08s both; }
+.glo-m-assemble .glo-o    { animation: gloAsmO .8s  cubic-bezier(.2,.7,.2,1) .16s both; }
+.glo-m-assemble .glo-core { animation: gloAsmDot .5s cubic-bezier(.2,.7,.2,1) .5s both; transform-box: fill-box; transform-origin: center; }
+@keyframes gloAsmG  { 0%{opacity:0;transform:translateY(-45%)} 100%{opacity:1;transform:translateY(0)} }
+@keyframes gloAsmL  { 0%{opacity:0;transform:translateY(55%)}  100%{opacity:1;transform:translateY(0)} }
+@keyframes gloAsmO  { 0%{opacity:0;transform:scale(0) rotate(-90deg)} 70%{opacity:1;transform:scale(1.12) rotate(0)} 100%{opacity:1;transform:scale(1)} }
+@keyframes gloAsmDot{ 0%{transform:scale(0)} 70%{transform:scale(1.4)} 100%{transform:scale(1)} }
+
+/* --- motion: spin (infinite, subtle idle) --- */
+.glo-m-spin .glo-ring-dash  { opacity: 1; transform-box: fill-box; transform-origin: center; animation: gloSpin 2.4s linear infinite; }
+.glo-m-spin .glo-ring-outer { stroke-dasharray: 7 10; transform-box: fill-box; transform-origin: center; animation: gloSpinSlow 10s linear infinite; }
+@keyframes gloSpin     { to { transform: rotate(360deg); } }
+@keyframes gloSpinSlow { to { transform: rotate(-360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .glo-logo *, .glo-logo { animation: none !important; opacity: 1 !important; transform: none !important; }
+  .glo-m-spin .glo-ring-dash { opacity: 0; }
 }

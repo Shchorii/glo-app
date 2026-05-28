@@ -5,7 +5,7 @@ export default function Home() {
   return (
     <div className="min-h-screen flex items-center justify-center px-5 py-10">
       <div className="max-w-xl w-full text-center space-y-7">
-        <div className="flex justify-center"><GloMark size={42} withTagline /></div>
+        <div className="flex justify-center"><GloMark size={42} withTagline motion="assemble" /></div>
         <div>
           <p className="chip mb-4">Campaign Manager · Closed Beta</p>
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-semibold tracking-tight text-ink-50 leading-[1.1]">
