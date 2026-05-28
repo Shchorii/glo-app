@@ -1,9 +1,14 @@
-import { dummyMetrics, dummyCampaign, SURFACE_META, fmtCents, fmtInt, fmtPct } from "@/lib/dummy-data";
+import { dummyMetrics, dummyCampaign, dummyOffer, SURFACE_META, fmtCents, fmtInt, fmtPct } from "@/lib/dummy-data";
+import { getStats } from "@/lib/scans";
 import { LiveImpressionsCounter } from "@/components/LiveImpressionsCounter";
-import { TrendingUp, MousePointerClick, Eye, DollarSign, Monitor, Tv } from "lucide-react";
+import { TrendingUp, MousePointerClick, Eye, DollarSign, Monitor, Tv, QrCode, BadgePercent, Store } from "lucide-react";
 
-export default function DashboardPage() {
+export const dynamic = "force-dynamic";
+
+export default async function DashboardPage() {
   const m = dummyMetrics;
+  const qr = await getStats(dummyOffer.code);
+  const redeemRate = qr.scans ? qr.redemptions / qr.scans : 0;
   const completionRate = m.totals.completions / m.totals.impressions;
   const ctr = m.totals.clicks / m.bySurface.ctv.impressions; // clicks only on CTV
   const maxTimeline = Math.max(...m.timeline.map((d) => d.impressions));
@@ -118,6 +123,25 @@ export default function DashboardPage() {
         </div>
       </section>
 
+      {/* QR coupon funnel */}
+      <section className="card p-5 md:p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-medium text-ink-100 flex items-center gap-2">
+            <QrCode size={15} className="text-cy-300" />
+            <span className="text-ink-400">DOOH coupon funnel</span>
+          </h2>
+          <a href={`/c/${dummyOffer.code}`} className="text-[12px] text-cy-300 hover:text-cy-200">Open coupon →</a>
+        </div>
+        <div className="grid grid-cols-3 gap-3 md:gap-4">
+          <FunnelStep icon={QrCode}        tone="cy"   label="Scans"        value={fmtInt(qr.scans)} sub={`${fmtPct(qr.scans / m.bySurface.dooh.impressions, 1)} of DOOH`} />
+          <FunnelStep icon={BadgePercent}  tone="lime" label="Redemptions"  value={fmtInt(qr.redemptions)} sub={`${dummyOffer.discountPct}% off claimed`} />
+          <FunnelStep icon={Store}         tone="cy"   label="Redeem rate"  value={fmtPct(redeemRate, 0)} sub="scan → counter" />
+        </div>
+        <p className="mt-3 text-[11px] text-ink-500">
+          The sidewalk QR gives DOOH a real conversion signal — <span className="text-ink-400">impression → scan → in-store redemption</span>, captured live.
+        </p>
+      </section>
+
       {/* Top blocks */}
       <section className="card p-5 md:p-6">
         <h2 className="text-sm font-medium text-ink-100 mb-4">
@@ -183,6 +207,23 @@ function SurfaceRow({
         <span>{fmtInt(imps)} imps · {fmtPct(completions / imps, 0)} VCR</span>
         <span>{fmtCents(spent)}</span>
       </div>
+    </div>
+  );
+}
+
+function FunnelStep({
+  icon: Icon, tone, label, value, sub,
+}: {
+  icon: React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>;
+  tone: "cy" | "lime"; label: string; value: string; sub: string;
+}) {
+  const toneClass = tone === "cy" ? "text-cy-300" : "text-lime-300";
+  return (
+    <div className="card-tight px-3 py-3 text-center">
+      <Icon size={16} className={`mx-auto mb-1.5 ${toneClass}`} strokeWidth={1.8} />
+      <div className="text-lg md:text-xl font-semibold text-ink-50 tabular-nums leading-tight">{value}</div>
+      <div className="text-[10px] uppercase tracking-wider text-ink-400 mt-0.5">{label}</div>
+      <div className="text-[10px] text-ink-500 mt-0.5">{sub}</div>
     </div>
   );
 }

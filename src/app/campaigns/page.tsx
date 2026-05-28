@@ -1,11 +1,18 @@
 import Link from "next/link";
 import {
-  dummyCampaign, dummyMetrics, dummyCreatives, SURFACE_META, fmtCents, fmtInt, fmtPct,
+  dummyCampaign, dummyMetrics, dummyCreatives, dummyOffer, SURFACE_META, fmtCents, fmtInt, fmtPct,
 } from "@/lib/dummy-data";
-import { Monitor, Tv, MapPin, Calendar, Eye, ArrowRight } from "lucide-react";
+import { getStats } from "@/lib/scans";
+import Image from "next/image";
+import { Monitor, Tv, MapPin, Calendar, Eye, ArrowRight, QrCode, BadgePercent } from "lucide-react";
 
-export default function CampaignsPage() {
+export const dynamic = "force-dynamic";
+
+export default async function CampaignsPage() {
   const c = dummyCampaign;
+  const stats = await getStats(dummyOffer.code);
+  const redemptionRate = stats.scans ? stats.redemptions / stats.scans : 0;
+  const scanRate = stats.scans / dummyMetrics.bySurface.dooh.impressions;
   const m = dummyMetrics;
   const budgetPct = c.spentCents / c.budgetCents;
   const daysLive = Math.max(1, Math.round((Date.now() - c.startsAt) / (1000 * 60 * 60 * 24)));
@@ -94,6 +101,49 @@ export default function CampaignsPage() {
           </div>
           <ArrowRight size={18} className="text-cy-300 group-hover:translate-x-1 transition-transform shrink-0" />
         </Link>
+      </div>
+
+      {/* DOOH QR coupon */}
+      <div className="card p-5 md:p-7 mt-4 md:mt-5">
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider font-medium bg-cy-400/15 text-cy-300 border border-cy-400/30">
+            <QrCode size={11} /> DOOH coupon
+          </span>
+          <span className="text-xs text-ink-500">turns sidewalk impressions into foot traffic</span>
+        </div>
+        <h2 className="text-lg md:text-xl font-medium text-ink-50 mb-4 flex items-center gap-2">
+          <BadgePercent size={18} className="text-lime-300" />
+          {dummyOffer.discountPct}% off — scan-to-claim
+        </h2>
+
+        <div className="flex flex-col sm:flex-row gap-5 sm:items-center">
+          {/* QR */}
+          <div className="shrink-0 mx-auto sm:mx-0">
+            <div className="bg-[#F2EFE6] rounded-xl p-2.5 w-36 h-36">
+              <Image src="/qr-jp-friday10.png" alt="Scan for 10% off" width={144} height={144} className="w-full h-full" />
+            </div>
+            <p className="text-center text-[10px] text-ink-500 mt-2">app.we-are-glo.com/c/{dummyOffer.code}</p>
+          </div>
+
+          {/* Funnel */}
+          <div className="flex-1 grid grid-cols-3 gap-3">
+            <Stat label="Scans" value={fmtInt(stats.scans)} />
+            <Stat label="Redemptions" value={fmtInt(stats.redemptions)} />
+            <Stat label="Redeem rate" value={fmtPct(redemptionRate, 0)} />
+            <div className="col-span-3 mt-1">
+              <div className="flex items-baseline justify-between mb-1.5">
+                <span className="text-[11px] uppercase tracking-wider text-ink-400">Scan rate vs DOOH impressions</span>
+                <span className="text-[12px] text-cy-300 tabular-nums">{fmtPct(scanRate, 1)}</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-bg-900 overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-cy-500 to-lime-300" style={{ width: `${Math.min(100, scanRate * 100 * 12)}%` }} />
+              </div>
+              <p className="text-[11px] text-ink-500 mt-2">
+                Live count — every scan of the sidewalk QR is captured here. <span className="text-ink-400">DOOH finally has a click.</span>
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

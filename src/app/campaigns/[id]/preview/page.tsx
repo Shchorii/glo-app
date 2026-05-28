@@ -76,7 +76,7 @@ function TabButton({
 }
 
 /* The actual creative shown inside the screen — pizza thumbnail + Johnny's branded overlay */
-function CreativeOnScreen({ aspect }: { aspect: "9:16" | "16:9" }) {
+function CreativeOnScreen({ aspect, withQR = false }: { aspect: "9:16" | "16:9"; withQR?: boolean }) {
   const creative = aspect === "9:16" ? dummyCreatives[0] : dummyCreatives[1];
   return (
     <div className="relative w-full h-full overflow-hidden bg-black">
@@ -107,6 +107,18 @@ function CreativeOnScreen({ aspect }: { aspect: "9:16" | "16:9" }) {
           Johnny's · Bedford Ave
         </div>
       </div>
+      {/* Scan-to-claim QR badge */}
+      {withQR && (
+        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/55 backdrop-blur-sm rounded-md px-1.5 py-1">
+          <span className="bg-[#F2EFE6] rounded-[3px] p-[2px]">
+            <img src="/qr-jp-friday10.png" alt="" className="block w-7 h-7 sm:w-9 sm:h-9" />
+          </span>
+          <span className="text-white font-bold leading-tight text-[7px] sm:text-[9px] uppercase tracking-wide">
+            Scan for<br/>10% off
+          </span>
+        </div>
+      )}
+
       {/* Playback bar */}
       <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/20">
         <div className="h-full bg-white" style={{ width: "53%" }} />
@@ -179,7 +191,7 @@ function DOOHScene({ time }: { time: string }) {
         <div className="absolute -inset-6 bg-cy-400/30 blur-3xl rounded-full pointer-events-none" />
         {/* Screen frame */}
         <div className="relative w-full aspect-[9/16] rounded-sm overflow-hidden ring-2 ring-[#2a3046] shadow-[0_0_60px_15px_rgba(34,211,238,0.45)]">
-          <CreativeOnScreen aspect="9:16" />
+          <CreativeOnScreen aspect="9:16" withQR />
         </div>
         {/* Kiosk pole + base */}
         <div className="w-1.5 h-3 bg-[#1a1f2e]" />

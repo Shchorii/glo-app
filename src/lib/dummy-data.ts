@@ -128,3 +128,17 @@ export const SURFACE_META: Record<Surface, { label: string; tone: string }> = {
 export const fmtCents = (c: number) => `$${(c / 100).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 export const fmtInt = (n: number) => n.toLocaleString();
 export const fmtPct = (n: number, digits = 1) => `${(n * 100).toFixed(digits)}%`;
+
+// ---- DOOH QR coupon offer ----
+export const dummyOffer = {
+  code: "JP-FRIDAY10",
+  brand: "Johnny's Pizza",
+  headline: "10% off your next order",
+  detail: "Show this code at Johnny's Pizza · Bedford Ave. One per customer. Valid through Jun 4.",
+  discountPct: 10,
+  campaignId: "camp_jp_001",
+  // Seed funnel (mirrors the GitHub store seed; used as fallback if store unreachable)
+  seedScans: 1284,
+  seedRedemptions: 312,
+};
+export const couponUrl = (code: string) => `https://app.we-are-glo.com/c/${code}`;
