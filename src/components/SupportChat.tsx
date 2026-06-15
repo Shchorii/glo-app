@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { GloBot } from "./GloBot";
 
 type ChatRole = "user" | "assistant";
 type ChatMessage = { id: string; role: ChatRole; content: string };
@@ -117,11 +118,14 @@ export function SupportChat() {
           className="w-[min(100vw-2rem,400px)] h-[min(72vh,560px)] flex flex-col card overflow-hidden shadow-2xl"
         >
           <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line-900 bg-bg-900/80">
-            <div>
-              <div id={`${panelId}-title`} className="text-[15px] font-semibold text-ink-50">
-                Glo support
+            <div className="flex items-center gap-2.5">
+              <GloBot variant="avatar" size={30} title="GloBot" />
+              <div>
+                <div id={`${panelId}-title`} className="text-[15px] font-semibold text-ink-50">
+                  Glo support
+                </div>
+                <div className="text-[12px] text-ink-400">Campaign Manager help</div>
               </div>
-              <div className="text-[12px] text-ink-400">Campaign Manager help</div>
             </div>
             <button
               type="button"
@@ -214,20 +218,35 @@ export function SupportChat() {
         </div>
       )}
 
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
-        onClick={() => setOpen((o) => !o)}
-        className={`flex items-center gap-2 rounded-full px-4 py-3 text-[14px] font-medium shadow-lg border transition-all ${
-          open
-            ? "bg-bg-900 border-line-700 text-ink-100"
-            : "bg-cy-500/20 border-cy-500/40 text-cy-100 hover:bg-cy-500/30 hover:text-ink-50"
-        }`}
-      >
-        <span className="inline-block w-2 h-2 rounded-full bg-cy-300 shadow-glow-cy" aria-hidden />
-        {open ? "Close chat" : "Ask Glo"}
-      </button>
+      {open ? (
+        <button
+          type="button"
+          aria-expanded
+          aria-controls={panelId}
+          onClick={() => setOpen(false)}
+          className="flex items-center gap-2 rounded-full px-4 py-3 text-[14px] font-medium shadow-lg border bg-bg-900 border-line-700 text-ink-100 transition-all hover:bg-bg-800 hover:text-ink-50"
+        >
+          <span className="inline-block w-2 h-2 rounded-full bg-cy-300 shadow-glow-cy" aria-hidden />
+          Close chat
+        </button>
+      ) : (
+        <div className="gb-launch relative flex items-center">
+          <span className="gb-bubble absolute right-full top-1/2 mr-3 whitespace-nowrap rounded-full bg-bg-900/95 border border-line-700 px-3 py-1.5 text-[12px] text-ink-100 shadow-lg">
+            Need a hand? <span className="text-cy-300 font-medium">Ask GloBot</span>
+          </span>
+          <button
+            type="button"
+            aria-label="Open Glo support chat"
+            aria-expanded={false}
+            onClick={() => setOpen(true)}
+            className="block rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-cy-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-950"
+          >
+            <span className="gb-hoverscale">
+              <GloBot variant="launcher" size={92} className="gb-bob" title="GloBot — open support chat" />
+            </span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

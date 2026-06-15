@@ -150,3 +150,41 @@
   .glo-logo *, .glo-logo { animation: none !important; opacity: 1 !important; transform: none !important; }
   .glo-m-spin .glo-ring-dash { opacity: 0; }
 }
+
+/* ===== GloBot — support mascot ===== */
+.gb { overflow: visible; }
+.gb-bob { animation: gbBob 4s ease-in-out infinite; }
+.gb-eye { transform-box: view-box; transform-origin: 70px 60px; animation: gbBlink 5.2s ease-in-out infinite; }
+.gb-orbit { transform-box: view-box; transform-origin: 70px 60px; animation: gbOrbit 6s linear infinite; }
+.gb-orbit-av { transform-box: view-box; transform-origin: 50px 52px; animation: gbOrbit 7s linear infinite; }
+.gb-tip, .gb-tipglow { transform-box: view-box; transform-origin: 70px 11px; }
+.gb-tip { animation: gbTip 2.6s ease-in-out infinite; }
+.gb-tipglow { animation: gbTipGlow 2.6s ease-in-out infinite; }
+.gb-led { animation: gbLed 3.4s ease-in-out infinite; }
+.gb-brows { transform-box: view-box; transform-origin: 70px 42px; transition: transform .25s ease; }
+.gb-arm-r { transform-box: view-box; transform-origin: 98px 116px; transition: transform .2s ease; }
+
+/* launcher hover/focus interactions */
+.gb-hoverscale { display: inline-block; transform-origin: 50% 82%; transition: transform .25s cubic-bezier(.2,.7,.2,1); }
+.gb-launch:hover .gb-hoverscale,
+.gb-launch:focus-within .gb-hoverscale { transform: translateY(-2px) scale(1.045); }
+.gb-launch:hover .gb-brows,
+.gb-launch:focus-within .gb-brows { transform: translateY(-2.5px); }
+.gb-launch:hover .gb-arm-r,
+.gb-launch:focus-within .gb-arm-r { animation: gbWave .62s ease-in-out infinite; }
+.gb-bubble { opacity: 0; transform: translate(6px, -50%); transition: opacity .2s ease, transform .2s ease; pointer-events: none; }
+.gb-launch:hover .gb-bubble,
+.gb-launch:focus-within .gb-bubble { opacity: 1; transform: translate(0, -50%); }
+
+@keyframes gbBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
+@keyframes gbBlink { 0%,93%,99%,100%{transform:scaleY(1)} 96%{transform:scaleY(.08)} }
+@keyframes gbOrbit { to{transform:rotate(360deg)} }
+@keyframes gbTip { 0%,100%{transform:scale(1)} 50%{transform:scale(1.18)} }
+@keyframes gbTipGlow { 0%,100%{opacity:.22} 50%{opacity:.42} }
+@keyframes gbLed { 0%,68%,100%{opacity:.35} 80%{opacity:1} }
+@keyframes gbWave { 0%,100%{transform:rotate(0)} 30%{transform:rotate(-20deg)} 70%{transform:rotate(10deg)} }
+
+@media (prefers-reduced-motion: reduce) {
+  .gb-bob, .gb-eye, .gb-orbit, .gb-orbit-av, .gb-tip, .gb-tipglow, .gb-led { animation: none; }
+  .gb-launch:hover .gb-arm-r, .gb-launch:focus-within .gb-arm-r { animation: none; }
+}
