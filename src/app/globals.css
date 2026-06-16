@@ -176,6 +176,12 @@
 .gb-launch:hover .gb-bubble,
 .gb-launch:focus-within .gb-bubble { opacity: 1; transform: translate(0, -50%); }
 
+/* one-time auto greeting: bubble pops + arm waves + brows lift, on its own */
+.gb-launch.gb-greet .gb-bubble { animation: gbBubblePop .34s cubic-bezier(.2,.7,.2,1) both; }
+.gb-launch.gb-greet .gb-arm-r { animation: gbWave .62s ease-in-out 4; }
+.gb-launch.gb-greet .gb-brows { transform: translateY(-2.5px); }
+.gb-launch.gb-greet .gb-hoverscale { transform: translateY(-2px) scale(1.045); }
+
 @keyframes gbBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
 @keyframes gbBlink { 0%,93%,99%,100%{transform:scaleY(1)} 96%{transform:scaleY(.08)} }
 @keyframes gbOrbit { to{transform:rotate(360deg)} }
@@ -183,8 +189,11 @@
 @keyframes gbTipGlow { 0%,100%{opacity:.22} 50%{opacity:.42} }
 @keyframes gbLed { 0%,68%,100%{opacity:.35} 80%{opacity:1} }
 @keyframes gbWave { 0%,100%{transform:rotate(0)} 30%{transform:rotate(-20deg)} 70%{transform:rotate(10deg)} }
+@keyframes gbBubblePop { 0%{opacity:0;transform:translate(8px,-50%) scale(.92)} 60%{opacity:1;transform:translate(0,-50%) scale(1.02)} 100%{opacity:1;transform:translate(0,-50%) scale(1)} }
 
 @media (prefers-reduced-motion: reduce) {
   .gb-bob, .gb-eye, .gb-orbit, .gb-orbit-av, .gb-tip, .gb-tipglow, .gb-led { animation: none; }
   .gb-launch:hover .gb-arm-r, .gb-launch:focus-within .gb-arm-r { animation: none; }
+  .gb-launch.gb-greet .gb-arm-r { animation: none; }
+  .gb-launch.gb-greet .gb-bubble { animation: none; opacity: 1; transform: translate(0, -50%); }
 }

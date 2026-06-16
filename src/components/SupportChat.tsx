@@ -34,6 +34,7 @@ export function SupportChat() {
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "error">("idle");
   const [error, setError] = useState("");
+  const [greet, setGreet] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -53,6 +54,27 @@ export function SupportChat() {
     if (window.innerWidth < 768) document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  // One-time friendly greeting: GloBot waves + pops a bubble shortly after load.
+  // Guarded per session so it invites without nagging on every navigation.
+  useEffect(() => {
+    if (open) return;
+    let dismissTimer: number | undefined;
+    const startTimer = window.setTimeout(() => {
+      try {
+        if (sessionStorage.getItem("glo_greeted") === "1") return;
+        sessionStorage.setItem("glo_greeted", "1");
+      } catch {
+        /* sessionStorage unavailable (private mode) — greet anyway */
+      }
+      setGreet(true);
+      dismissTimer = window.setTimeout(() => setGreet(false), 5200);
+    }, 800);
+    return () => {
+      window.clearTimeout(startTimer);
+      if (dismissTimer) window.clearTimeout(dismissTimer);
     };
   }, [open]);
 
@@ -230,15 +252,18 @@ export function SupportChat() {
           Close chat
         </button>
       ) : (
-        <div className="gb-launch relative flex items-center">
+        <div className={`gb-launch relative flex items-center${greet ? " gb-greet" : ""}`}>
           <span className="gb-bubble absolute right-full top-1/2 mr-3 whitespace-nowrap rounded-full bg-bg-900/95 border border-line-700 px-3 py-1.5 text-[12px] text-ink-100 shadow-lg">
-            Need a hand? <span className="text-cy-300 font-medium">Ask GloBot</span>
+            Hi! <span aria-hidden>👋</span> <span className="text-cy-300 font-medium">Ask me anything</span>
           </span>
           <button
             type="button"
             aria-label="Open Glo support chat"
             aria-expanded={false}
-            onClick={() => setOpen(true)}
+            onClick={() => {
+              setGreet(false);
+              setOpen(true);
+            }}
             className="block rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-cy-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-950"
           >
             <span className="gb-hoverscale">
