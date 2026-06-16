@@ -35,6 +35,10 @@
   body {
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /* Create a stacking context so the fixed negative-z background layers
+       (ambient-bg, grid-bg, floaters) paint above the body background and
+       below content — same mechanism as we-are-glo.com's `isolate` wrapper. */
+    isolation: isolate;
   }
   *::selection { background-color: rgba(34,211,238,0.3); color: #F1F5FB; }
 }
