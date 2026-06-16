@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { SupportChat } from "@/components/SupportChat";
+import { FloatingCreatives } from "@/components/FloatingCreatives";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -14,6 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="ambient-bg" />
         <div className="grid-bg" />
+        <FloatingCreatives />
         {children}
         <SupportChat />
       </body>

@@ -197,3 +197,41 @@
   .gb-launch.gb-greet .gb-arm-r { animation: none; }
   .gb-launch.gb-greet .gb-bubble { animation: none; opacity: 1; transform: translate(0, -50%); }
 }
+
+/* ─── Floating ad-format creatives (ambient bg) — shared with we-are-glo.com ─── */
+.floaters {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+.floater {
+  position: absolute;
+  opacity: 0;
+  will-change: transform, opacity, filter;
+  animation-name: floaterFadeIn, floatBob, floaterFlicker;
+  animation-timing-function: ease, ease-in-out, ease-in-out;
+  animation-iteration-count: 1, infinite, infinite;
+  animation-direction: normal, alternate, normal;
+  animation-fill-mode: forwards, none, none;
+}
+@keyframes floaterFadeIn {
+  to { opacity: var(--op, 0.15); }
+}
+@keyframes floatBob {
+  0%   { transform: translateY(0) rotate(0deg); }
+  100% { transform: translateY(-14px) rotate(6deg); }
+}
+@keyframes floaterFlicker {
+  0%, 100% { opacity: var(--op, 0.15); }
+  88%      { opacity: calc(var(--op, 0.15) * 0.4); }
+  92%      { opacity: var(--op, 0.15); }
+}
+/* Reduced motion: keep the floaters visible but stop the motion */
+@media (prefers-reduced-motion: reduce) {
+  .floater {
+    animation: floaterFadeIn 1s ease forwards;
+    transform: none !important;
+  }
+}
