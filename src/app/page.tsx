@@ -9,7 +9,7 @@ export default function Home() {
         <div>
           <p className="chip mb-4">Campaign Manager · Closed Beta</p>
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-semibold tracking-tight text-ink-50 leading-[1.1]">
-            Make ads. Pick blocks. Watch them <span className="text-lime-400">glow.</span>
+            Make creatives. Pick blocks. Watch them <span className="text-lime-400">glow.</span>
           </h1>
           <p className="mt-4 text-ink-300 text-[15px] md:text-base">
             Upload a Reel or TikTok. Glo remixes it for every screen — Connected TV, in-venue, sidewalk DOOH, premium pubs, mobile — and lights up the neighborhoods you pick.
