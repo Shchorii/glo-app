@@ -6,7 +6,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Glo Campaign Manager",
-  description: "Light up every screen they watch — neighborhood-precise cross-screen advertising.",
+  description: "Light up every screen they watch — cross-screen campaigns, live in 60 seconds.",
   metadataBase: new URL("https://app.we-are-glo.com"),
 };
 
