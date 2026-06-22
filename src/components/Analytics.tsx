@@ -4,9 +4,9 @@ import Script from "next/script";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
 
-// Sends into the existing "GLO" GA4 property (G-ZCK5DKHCKM).
-// App traffic is separable from the marketing site by hostname (app.we-are-glo.com).
-const GA_MEASUREMENT_ID = "G-ZCK5DKHCKM";
+// Dedicated "Glo App" GA4 property (G-L1WPV7E16V), separate from the
+// marketing "GLO" property so app usage reports stand on their own.
+const GA_MEASUREMENT_ID = "G-L1WPV7E16V";
 
 function PageviewTracker() {
   const pathname = usePathname();
