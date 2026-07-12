@@ -29,6 +29,7 @@ export default function CampaignMap({ screens }: { screens: MapScreen[] }) {
       const map = L.map(elRef.current, {
         zoomControl: true,
         scrollWheelZoom: false, // don't hijack page scroll
+        dragging: !L.Browser.mobile, // mobile: two-finger pinch zoom only, page scroll stays free
         attributionControl: true,
       });
       mapRef.current = map;
@@ -58,15 +59,23 @@ export default function CampaignMap({ screens }: { screens: MapScreen[] }) {
           `,
         });
 
-        L.marker([s.lat, s.lng], { icon })
-          .addTo(map)
-          .bindTooltip(
-            `<div class="glo-tip">
+        const infoHtml = `<div class="glo-tip">
                <div class="glo-tip-corner">${s.corner}</div>
                <div class="glo-tip-meta">${s.neighborhood} &middot; ${s.impressions.toLocaleString()} impressions</div>
-             </div>`,
-            { direction: "top", offset: [0, -size / 2 - 2], opacity: 1 }
-          );
+             </div>`;
+
+        const marker = L.marker([s.lat, s.lng], { icon }).addTo(map);
+        if (L.Browser.mobile) {
+          // Touch: tooltips get closed by the synthesized map click; popups are the native tap pattern
+          marker.bindPopup(infoHtml, {
+            closeButton: false,
+            offset: [0, -size / 2],
+            className: "glo-pop",
+            autoPan: false,
+          });
+        } else {
+          marker.bindTooltip(infoHtml, { direction: "top", offset: [0, -size / 2 - 2], opacity: 1 });
+        }
       });
 
       // Zoom in tight on the footprint
@@ -92,6 +101,8 @@ export default function CampaignMap({ screens }: { screens: MapScreen[] }) {
       />
       <style jsx global>{`
         .glo-screen-marker { background: transparent; border: none; }
+        .glo-screen-marker .glo-halo,
+        .glo-screen-marker .glo-dot { pointer-events: none; }
         .glo-screen-marker .glo-halo {
           position: absolute; inset: 0; margin: auto;
           border-radius: 9999px;
@@ -115,6 +126,12 @@ export default function CampaignMap({ screens }: { screens: MapScreen[] }) {
           border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.5); padding: 8px 10px;
         }
         .leaflet-tooltip-top:before { border-top-color: rgba(163, 230, 53, 0.35); }
+        .glo-pop .leaflet-popup-content-wrapper {
+          background: #0d1117; border: 1px solid rgba(163, 230, 53, 0.35);
+          border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+        }
+        .glo-pop .leaflet-popup-content { margin: 8px 10px; }
+        .glo-pop .leaflet-popup-tip { background: #0d1117; border: 1px solid rgba(163, 230, 53, 0.35); }
         .glo-tip-corner { color: #f4f6f8; font-weight: 600; font-size: 13px; }
         .glo-tip-meta { color: #94a3b8; font-size: 11px; margin-top: 2px; }
         .leaflet-container { background: #0a0e13; font: inherit; }
