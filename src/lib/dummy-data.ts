@@ -67,7 +67,7 @@ export type Metrics = {
   bySurface: Record<Surface, { impressions: number; completions: number; clicks: number; spentCents: number }>;
   byNeighborhood: { name: string; impressions: number; completionRate: number; spentCents: number }[];
   timeline: { date: string; label: string; impressions: number }[];
-  topBlocks: { neighborhood: string; corner: string; surface: Surface; impressions: number }[];
+  topBlocks: { neighborhood: string; corner: string; surface: Surface; impressions: number; lat: number; lng: number }[];
 };
 
 export const dummyMetrics: Metrics = {
@@ -108,11 +108,11 @@ export const dummyMetrics: Metrics = {
     { date: "2026-05-27", label: "Wed", impressions:  1_900 }, // today, partial
   ],
   topBlocks: [
-    { neighborhood: "Williamsburg", corner: "Bedford & N 7th",         surface: "dooh", impressions: 9_420 },
-    { neighborhood: "Williamsburg", corner: "Wythe & N 6th",            surface: "dooh", impressions: 8_215 },
-    { neighborhood: "Bushwick",     corner: "Knickerbocker & Troutman", surface: "dooh", impressions: 7_840 },
-    { neighborhood: "Williamsburg", corner: "Driggs & Metropolitan",    surface: "dooh", impressions: 6_120 },
-    { neighborhood: "Greenpoint",   corner: "Manhattan & Calyer",       surface: "dooh", impressions: 4_529 },
+    { neighborhood: "Williamsburg", corner: "Bedford & N 7th",         surface: "dooh", impressions: 9_420, lat: 40.71745, lng: -73.95655 },
+    { neighborhood: "Williamsburg", corner: "Wythe & N 6th",            surface: "dooh", impressions: 8_215, lat: 40.71800, lng: -73.96170 },
+    { neighborhood: "Bushwick",     corner: "Knickerbocker & Troutman", surface: "dooh", impressions: 7_840, lat: 40.70470, lng: -73.92210 },
+    { neighborhood: "Williamsburg", corner: "Driggs & Metropolitan",    surface: "dooh", impressions: 6_120, lat: 40.71360, lng: -73.96010 },
+    { neighborhood: "Greenpoint",   corner: "Manhattan & Calyer",       surface: "dooh", impressions: 4_529, lat: 40.72900, lng: -73.95380 },
   ],
 };
 

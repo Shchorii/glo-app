@@ -5,6 +5,7 @@ import {
 import { getStats } from "@/lib/scans";
 import Image from "next/image";
 import { Monitor, Tv, MapPin, Calendar, Eye, ArrowRight, QrCode, BadgePercent } from "lucide-react";
+import CampaignMap from "@/components/CampaignMap";
 
 export const dynamic = "force-dynamic";
 
@@ -101,6 +102,35 @@ export default async function CampaignsPage() {
           </div>
           <ArrowRight size={18} className="text-cy-300 group-hover:translate-x-1 transition-transform shrink-0" />
         </Link>
+      </div>
+
+      {/* Live screen map */}
+      <div className="card p-5 md:p-7 mt-4 md:mt-5">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider font-medium bg-lime-400/15 text-lime-300 border border-lime-400/30">
+            <span className="w-1.5 h-1.5 rounded-full bg-lime-400 animate-pulse" />
+            On the street right now
+          </span>
+          <span className="text-xs text-ink-500">{m.topBlocks.length} screens · {c.targeting.neighborhoods.join(" · ")}</span>
+        </div>
+        <h2 className="text-lg md:text-xl font-medium text-ink-50 mb-1 flex items-center gap-2">
+          <MapPin size={18} className="text-lime-300" />
+          Where your ads are running
+        </h2>
+        <p className="text-[13px] text-ink-400 mb-4">Every glowing dot is a live screen. Bigger glow, more impressions.</p>
+
+        <CampaignMap screens={m.topBlocks} />
+
+        {/* Corner chips */}
+        <div className="flex flex-wrap gap-2 mt-4">
+          {m.topBlocks.map((b) => (
+            <span key={b.corner} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] bg-bg-700/60 border border-line-800 text-ink-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-lime-400 shadow-[0_0_6px_rgba(163,230,53,0.9)]" />
+              {b.corner}
+              <span className="text-ink-500 tabular-nums">{fmtInt(b.impressions)}</span>
+            </span>
+          ))}
+        </div>
       </div>
 
       {/* DOOH QR coupon */}
