@@ -4,10 +4,10 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  getCampaign, cancelDraft, signedCreativeUrl, daysBetween, fmtUsd,
+  getCampaign, cancelDraft, signedCreativeUrl, startCheckout, daysBetween, fmtUsd,
   type CampaignDetail, type CampaignStatus,
 } from "@/lib/db";
-import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle } from "lucide-react";
+import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2 } from "lucide-react";
 
 const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
   draft:           { label: "Draft",            cls: "bg-bg-700/60 text-ink-200 border-line-700" },
@@ -24,7 +24,9 @@ function CampaignView() {
   const params = useSearchParams();
   const router = useRouter();
   const id = params.get("id");
+  const justPaid = params.get("paid") === "1";
   const [c, setC] = useState<CampaignDetail | null | "loading">("loading");
+  const [paying, setPaying] = useState(false);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -39,7 +41,13 @@ function CampaignView() {
         }
       })
       .catch((e) => { setErr(String(e?.message ?? e)); setC(null); });
-  }, [id]);
+    if (justPaid) {
+      const t = window.setTimeout(() => {
+        getCampaign(id).then((res) => res && setC(res)).catch(() => {});
+      }, 3500);
+      return () => window.clearTimeout(t);
+    }
+  }, [id, justPaid]);
 
   if (c === "loading") {
     return <div className="flex items-center gap-2 text-ink-400 text-sm py-12 justify-center"><Loader2 size={15} className="animate-spin" /> Loading campaign…</div>;
@@ -69,6 +77,18 @@ function CampaignView() {
     }
   }
 
+  async function onPay() {
+    if (!c || c === "loading") return;
+    setPaying(true); setErr(null);
+    try {
+      const url = await startCheckout(c.id);
+      window.location.href = url;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setPaying(false);
+    }
+  }
+
   return (
     <div>
       <Link href="/campaigns" className="inline-flex items-center gap-1.5 text-sm text-ink-300 hover:text-ink-50 mb-5">
@@ -93,9 +113,22 @@ function CampaignView() {
           </div>
         </div>
 
-        {c.status === "pending_payment" && (
-          <div className="rounded-lg border border-cy-400/30 bg-cy-400/5 px-4 py-3 text-[13px] text-cy-200 mb-5">
-            Reserved. Checkout opens in the next release; your screens and dates are held.
+        {c.status === "pending_payment" && justPaid && (
+          <div className="rounded-lg border border-lime-400/30 bg-lime-400/5 px-4 py-3 text-[13px] text-lime-200 mb-5 flex items-center gap-2">
+            <CheckCircle2 size={15} className="shrink-0" /> Payment received. Your campaign is moving to review; this page will update in a moment.
+          </div>
+        )}
+        {c.status === "pending_payment" && !justPaid && (
+          <div className="rounded-lg border border-cy-400/30 bg-cy-400/5 px-4 py-3 mb-5 flex flex-wrap items-center justify-between gap-3">
+            <span className="text-[13px] text-cy-200">Reserved. Your screens and dates are held; complete payment to send it to review.</span>
+            <button type="button" disabled={paying} onClick={onPay} className="btn btn-lime disabled:opacity-40">
+              {paying ? <Loader2 size={15} className="animate-spin" /> : <><CreditCard size={15} /> Complete payment · {fmtUsd(c.total_usd)}</>}
+            </button>
+          </div>
+        )}
+        {c.status === "pending_review" && (
+          <div className="rounded-lg border border-amber-400/30 bg-amber-400/5 px-4 py-3 text-[13px] text-amber-200 mb-5">
+            Paid and in review. We check every creative before it hits the street; you will get the go-live signal soon.
           </div>
         )}
 
