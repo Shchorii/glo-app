@@ -2,7 +2,7 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { signIn } from "@/lib/auth-client";
+import { getSupabase } from "@/lib/supabase";
 import { GloMark } from "@/components/Logo";
 import { Loader2 } from "lucide-react";
 
@@ -18,25 +18,11 @@ function SignInForm() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true); setError(null);
-
-    // Try owner-bypass login first (single-user demo gate)
-    const ownerRes = await fetch("/api/owner-login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-    if (ownerRes.ok) {
-      router.push(nextUrl);
-      return;
-    }
-
-    // Fall back to Better-Auth (DB-backed)
-    const res = await signIn.email({ email, password });
+    const sb = getSupabase();
+    if (!sb) { setLoading(false); setError("Sign-in is not configured in this build."); return; }
+    const { error } = await sb.auth.signInWithPassword({ email, password });
     setLoading(false);
-    if (res?.error) {
-      setError(res.error.message || "Invalid credentials");
-      return;
-    }
+    if (error) { setError(error.message || "Invalid credentials"); return; }
     router.push(nextUrl);
   }
 

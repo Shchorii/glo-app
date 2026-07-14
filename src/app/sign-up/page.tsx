@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { signUp } from "@/lib/auth-client";
+import { getSupabase } from "@/lib/supabase";
 import { GloMark } from "@/components/Logo";
 import { Loader2 } from "lucide-react";
 
@@ -17,12 +17,11 @@ export default function SignUpPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true); setError(null);
-    const res = await signUp.email({ name, email, password });
+    const sb = getSupabase();
+    if (!sb) { setLoading(false); setError("Sign-up is not configured in this build."); return; }
+    const { error } = await sb.auth.signUp({ email, password, options: { data: { full_name: name } } });
     setLoading(false);
-    if (res?.error) {
-      setError(res.error.message || "Couldn't create account");
-      return;
-    }
+    if (error) { setError(error.message || "Could not create account"); return; }
     router.push("/studio");
   }
 
