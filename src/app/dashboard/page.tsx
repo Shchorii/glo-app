@@ -3,7 +3,7 @@ import { getStats } from "@/lib/scans";
 import { LiveImpressionsCounter } from "@/components/LiveImpressionsCounter";
 import { TrendingUp, MousePointerClick, Eye, DollarSign, Monitor, Tv, QrCode, BadgePercent, Store } from "lucide-react";
 
-export const dynamic = "force-dynamic";
+
 
 export default async function DashboardPage() {
   const m = dummyMetrics;
