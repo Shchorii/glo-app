@@ -1,4 +1,5 @@
 "use client";
+import { CHAT_ENDPOINT } from "@/lib/endpoints";
 
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { GloBot } from "./GloBot";
@@ -94,7 +95,7 @@ export function SupportChat() {
       .map((m) => ({ role: m.role, content: m.content }));
 
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetch(CHAT_ENDPOINT ?? "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: apiMessages }),
