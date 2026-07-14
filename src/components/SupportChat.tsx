@@ -2,6 +2,7 @@
 import { CHAT_ENDPOINT } from "@/lib/endpoints";
 
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { usePathname } from "next/navigation";
 import { GloBot } from "./GloBot";
 
 type ChatRole = "user" | "assistant";
@@ -25,6 +26,8 @@ function newId() {
 }
 
 export function SupportChat() {
+  const pathname = usePathname();
+  const hidden = pathname === "/book" || pathname.startsWith("/book/");
   const panelId = useId();
   const inputId = useId();
   const listRef = useRef<HTMLDivElement>(null);
@@ -130,6 +133,9 @@ export function SupportChat() {
       void sendUserText(draft);
     }
   }
+
+  // The booking wizard's primary actions live bottom-right; keep the money flow unobstructed.
+  if (hidden) return null;
 
   return (
     <div className="fixed bottom-5 right-5 md:bottom-8 md:right-8 z-[38] flex flex-col items-end gap-3">
