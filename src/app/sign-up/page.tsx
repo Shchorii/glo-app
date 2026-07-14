@@ -17,12 +17,21 @@ export default function SignUpPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true); setError(null);
-    const sb = getSupabase();
-    if (!sb) { setLoading(false); setError("Sign-up is not configured in this build."); return; }
-    const { error } = await sb.auth.signUp({ email, password, options: { data: { full_name: name } } });
-    setLoading(false);
-    if (error) { setError(error.message || "Could not create account"); return; }
-    router.push("/studio");
+    try {
+      const sb = getSupabase();
+      if (!sb) throw new Error("Sign-up is not configured in this build.");
+      const { error } = await sb.auth.signUp({
+        email,
+        password,
+        options: { data: { full_name: name } },
+      });
+      if (error) throw error;
+      router.push("/studio");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not create account. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (

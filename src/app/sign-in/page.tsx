@@ -18,12 +18,17 @@ function SignInForm() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true); setError(null);
-    const sb = getSupabase();
-    if (!sb) { setLoading(false); setError("Sign-in is not configured in this build."); return; }
-    const { error } = await sb.auth.signInWithPassword({ email, password });
-    setLoading(false);
-    if (error) { setError(error.message || "Invalid credentials"); return; }
-    router.push(nextUrl);
+    try {
+      const sb = getSupabase();
+      if (!sb) throw new Error("Sign-in is not configured in this build.");
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      router.push(nextUrl);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not sign in. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (

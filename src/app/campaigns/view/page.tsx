@@ -29,22 +29,40 @@ function CampaignView() {
   const [c, setC] = useState<CampaignDetail | null | "loading">("loading");
   const [paying, setPaying] = useState(false);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) { setC(null); return; }
+    setErr(null);
+    setImgUrl(null);
+    setPreviewErr(null);
     getCampaign(id)
       .then((res) => {
         setC(res);
         if (res?.creative?.storage_path) {
-          signedCreativeUrl(res.creative.storage_path).then(setImgUrl);
+          signedCreativeUrl(res.creative.storage_path)
+            .then(setImgUrl)
+            .catch((error: unknown) => {
+              setPreviewErr(
+                error instanceof Error ? error.message : "Creative preview could not be loaded."
+              );
+            });
         }
       })
       .catch((e) => { setErr(String(e?.message ?? e)); setC(null); });
     if (justPaid) {
       const t = window.setTimeout(() => {
-        getCampaign(id).then((res) => res && setC(res)).catch(() => {});
+        getCampaign(id)
+          .then((res) => res && setC(res))
+          .catch((error: unknown) => {
+            setErr(
+              error instanceof Error
+                ? `Payment received, but campaign status could not be refreshed: ${error.message}`
+                : "Payment received, but campaign status could not be refreshed."
+            );
+          });
       }, 3500);
       return () => window.clearTimeout(t);
     }
@@ -153,6 +171,7 @@ function CampaignView() {
                 <div className="text-ink-100 capitalize">{c.creative.source}</div>
                 <div className="mt-0.5 capitalize">Review: {c.creative.review_status}</div>
                 {c.creative.rejection_reason && <div className="mt-0.5 text-red-400">{c.creative.rejection_reason}</div>}
+                {previewErr && <div className="mt-0.5 text-red-400">{previewErr}</div>}
               </div>
             </div>
           ) : (

@@ -1,7 +1,7 @@
 "use client";
 import { GloMark } from "./Logo";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import { Sparkles, Layers, Megaphone, BarChart3, Settings, Menu, X, LogOut, PlusCircle } from "lucide-react";
 
@@ -38,7 +38,17 @@ function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () 
   );
 }
 
-function FooterItems({ pathname, onNavigate, onSignOut }: { pathname: string; onNavigate?: () => void; onSignOut: () => void }) {
+function FooterItems({
+  pathname,
+  onNavigate,
+  onSignOut,
+  signOutError,
+}: {
+  pathname: string;
+  onNavigate?: () => void;
+  onSignOut: () => void;
+  signOutError: string | null;
+}) {
   const settingsActive = pathname === "/settings" || pathname.startsWith("/settings/");
   return (
     <div className="space-y-1">
@@ -60,14 +70,15 @@ function FooterItems({ pathname, onNavigate, onSignOut }: { pathname: string; on
         <LogOut size={18} strokeWidth={1.8} />
         Sign out
       </button>
+      {signOutError && <p className="px-3 pt-1 text-xs text-red-400" role="alert">{signOutError}</p>}
     </div>
   );
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   // Close drawer on route change
   useEffect(() => { setDrawerOpen(false); }, [pathname]);
@@ -80,10 +91,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [drawerOpen]);
 
   async function signOut() {
-    const { signOut: sbSignOut } = await import("@/lib/auth-client");
-    try { await sbSignOut(); } catch {}
-    document.cookie = "glo-owner=; Max-Age=0; path=/";
-    window.location.href = "/sign-in";
+    setSignOutError(null);
+    try {
+      const { signOut: sbSignOut } = await import("@/lib/auth-client");
+      await sbSignOut();
+      document.cookie = "glo-owner=; Max-Age=0; path=/";
+      window.location.href = "/sign-in";
+    } catch (error) {
+      setSignOutError(error instanceof Error ? error.message : "Could not sign out. Please try again.");
+    }
   }
 
   return (
@@ -132,7 +148,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <NavItems pathname={pathname} onNavigate={() => setDrawerOpen(false)} />
         </nav>
         <div className="px-3 py-4 border-t border-line-900">
-          <FooterItems pathname={pathname} onNavigate={() => setDrawerOpen(false)} onSignOut={signOut} />
+          <FooterItems
+            pathname={pathname}
+            onNavigate={() => setDrawerOpen(false)}
+            onSignOut={signOut}
+            signOutError={signOutError}
+          />
         </div>
       </aside>
 
@@ -145,7 +166,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <NavItems pathname={pathname} />
         </nav>
         <div className="px-3 py-4 border-t border-line-900">
-          <FooterItems pathname={pathname} onSignOut={signOut} />
+          <FooterItems pathname={pathname} onSignOut={signOut} signOutError={signOutError} />
         </div>
       </aside>
 
