@@ -1,5 +1,6 @@
 "use client";
 import { getSupabase } from "@/lib/supabase";
+import { CHECKOUT_ENDPOINT } from "@/lib/endpoints";
 
 export type Screen = {
   id: string;
@@ -180,6 +181,27 @@ export async function signedCreativeUrl(path: string): Promise<string | null> {
   const { data, error } = await sb().storage.from("creatives").createSignedUrl(path, 3600);
   if (error) return null;
   return data.signedUrl;
+}
+
+/** Kicks off Stripe Checkout for a reserved campaign; resolves to the redirect URL. */
+export async function startCheckout(campaignId: string): Promise<string> {
+  if (!CHECKOUT_ENDPOINT) throw new Error("Checkout is not configured in this build.");
+  const client = sb();
+  const { data } = await client.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Sign in to pay.");
+  const res = await fetch(CHECKOUT_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+    },
+    body: JSON.stringify({ campaign_id: campaignId }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+  if (!res.ok || !body.url) throw new Error(body.error || `Checkout failed (${res.status})`);
+  return body.url;
 }
 
 export function daysBetween(start: string, end: string): number {

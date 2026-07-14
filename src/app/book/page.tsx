@@ -140,7 +140,7 @@ export default function BookPage() {
             {selected.size} screen{selected.size === 1 ? "" : "s"} · {days} day{days === 1 ? "" : "s"} · {fmtUsd(total)}
           </p>
           <p className="text-sm text-ink-400 mb-6">
-            Payments go live in the next release. Your campaign is locked in and first in line; we will notify you the moment checkout opens.
+            Your screens and dates are reserved. Complete payment from the campaign page to send it to review.
           </p>
           <div className="flex justify-center gap-3">
             <Link href={`/campaigns/view?id=${doneId}`} className="btn btn-primary">View campaign</Link>
