@@ -1,4 +1,7 @@
-// Supabase Edge Function: GloBot support chat (replaces Next /api/chat).
+// Supabase Edge Function: GloBot support chat.
+// API key resolution: Supabase Vault ('OPENAI_API_KEY') first, env secret as fallback.
+import postgres from "npm:postgres@3.4.5";
+
 const SYSTEM_PROMPT = `You are Glo's support assistant inside the Glo Campaign Manager (app.we-are-glo.com) — closed beta for cross-screen local campaigns.
 
 Answer using ONLY these facts. Be concise. If unsure, direct users to sign in, contact support via the site, or email hi@glo.io.
@@ -33,15 +36,36 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+let cachedKey: string | null = null;
+
+async function getOpenAIKey(): Promise<string> {
+  if (cachedKey) return cachedKey;
+  const dbUrl = Deno.env.get("SUPABASE_DB_URL");
+  if (dbUrl) {
+    const sql = postgres(dbUrl, { max: 1, prepare: false });
+    try {
+      const rows = await sql`select decrypted_secret from vault.decrypted_secrets where name = 'OPENAI_API_KEY' limit 1`;
+      const key = rows[0]?.decrypted_secret as string | undefined;
+      if (key) { cachedKey = key; return key; }
+    } catch { /* fall through to env */ } finally {
+      await sql.end({ timeout: 2 });
+    }
+  }
+  const envKey = Deno.env.get("OPENAI_API_KEY");
+  if (envKey) { cachedKey = envKey; return envKey; }
+  throw new Error("no key source");
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
     const { messages } = await req.json();
     if (!Array.isArray(messages)) throw new Error("bad payload");
+    const apiKey = await getOpenAIKey();
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${Deno.env.get("OPENAI_API_KEY")}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -54,7 +78,7 @@ Deno.serve(async (req) => {
     if (!res.ok) throw new Error(`openai ${res.status}`);
     const data = await res.json();
     const reply = (data.choices?.[0]?.message?.content ?? "").trim().slice(0, 4000);
-    return new Response(JSON.stringify({ reply }), {
+    return new Response(JSON.stringify({ reply, message: { role: "assistant", content: reply } }), {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
   } catch (e) {
