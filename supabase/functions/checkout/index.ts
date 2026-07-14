@@ -28,6 +28,20 @@ async function getSecret(name: string): Promise<string | null> {
   }
 }
 
+// KEEP IN SYNC with src/lib/dayparts.ts
+const DAYPART_SHARES: Record<string, number> = {
+  morning_rush: 0.35, daytime: 0.4, evening_rush: 0.35, evening: 0.25, late_night: 0.15,
+};
+function daypartMultiplier(ids: string[] | null | undefined): number {
+  if (!ids || !ids.length || ids.includes("all_day")) return 1;
+  const sum = ids.reduce((a, id) => a + (DAYPART_SHARES[id] ?? 0), 0);
+  return Math.min(sum || 1, 1);
+}
+function daypartLabel(ids: string[] | null | undefined): string {
+  if (!ids || !ids.length || ids.includes("all_day")) return "all day";
+  return ids.filter((id) => DAYPART_SHARES[id]).join(", ").replaceAll("_", " ");
+}
+
 function daysBetween(start: string, end: string): number {
   const s = new Date(`${start}T00:00:00Z`).getTime();
   const e = new Date(`${end}T00:00:00Z`).getTime();
@@ -60,7 +74,7 @@ Deno.serve(async (req) => {
     const admin = createClient(url, service);
     const { data: c, error: cErr } = await admin
       .from("campaigns")
-      .select("id, user_id, name, start_date, end_date, status, campaign_screens(screens(daily_price_usd))")
+      .select("id, user_id, name, start_date, end_date, status, dayparts, campaign_screens(screens(daily_price_usd))")
       .eq("id", campaign_id)
       .maybeSingle();
     if (cErr) throw cErr;
@@ -73,7 +87,8 @@ Deno.serve(async (req) => {
       .map((cs) => Number(cs.screens?.daily_price_usd ?? 0))
       .filter((n) => n > 0);
     const days = daysBetween(c.start_date, c.end_date);
-    const total = prices.reduce((a, b) => a + b, 0) * days;
+    const dpMult = daypartMultiplier(c.dayparts as string[] | null);
+    const total = Math.round(prices.reduce((a, b) => a + b, 0) * dpMult * days * 100) / 100;
     if (!prices.length || days < 1 || total < 1) return json({ error: "Campaign has no billable screens or days." }, 422);
 
     const stripeKey = cachedStripeKey ?? (cachedStripeKey = await getSecret("STRIPE_SECRET_KEY"));
@@ -89,7 +104,7 @@ Deno.serve(async (req) => {
             currency: "usd",
             product_data: {
               name: `Glo campaign: ${c.name}`,
-              description: `${prices.length} screen${prices.length === 1 ? "" : "s"} x ${days} day${days === 1 ? "" : "s"} (${c.start_date} to ${c.end_date})`,
+              description: `${prices.length} screen${prices.length === 1 ? "" : "s"} x ${days} day${days === 1 ? "" : "s"} (${c.start_date} to ${c.end_date}), ${daypartLabel(c.dayparts as string[] | null)}`,
             },
             unit_amount: Math.round(total * 100),
           },
