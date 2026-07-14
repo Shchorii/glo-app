@@ -79,10 +79,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [drawerOpen]);
 
   async function signOut() {
-    await fetch("/api/owner-logout", { method: "POST" });
-    // Also clear better-auth session if any (no-op if not signed in there)
-    try { await fetch("/api/auth/sign-out", { method: "POST" }); } catch {}
-    router.push("/sign-in");
+    const { signOut: sbSignOut } = await import("@/lib/auth-client");
+    try { await sbSignOut(); } catch {}
+    document.cookie = "glo-owner=; Max-Age=0; path=/";
+    window.location.href = "/sign-in";
   }
 
   return (
