@@ -157,7 +157,7 @@ function CampaignView() {
 
 export default function CampaignViewPage() {
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-10">
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 md:px-8 pt-6 md:pt-10 pb-28 md:pb-32">
       <Suspense fallback={<div className="flex items-center gap-2 text-ink-400 text-sm py-12 justify-center"><Loader2 size={15} className="animate-spin" /> Loading…</div>}>
         <CampaignView />
       </Suspense>
