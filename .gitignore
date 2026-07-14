@@ -6,3 +6,4 @@ out
 .vercel
 *.log
 .DS_Store
+tsconfig.tsbuildinfo
