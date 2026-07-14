@@ -3,7 +3,10 @@ import { GloMark } from "@/components/Logo";
 import { ScanBeacon } from "./ScanBeacon";
 import { Pizza, MapPin, Clock, BadgePercent } from "lucide-react";
 
-export const dynamic = "force-dynamic";
+export function generateStaticParams() {
+  return [{ code: "JP-FRIDAY10" }];
+}
+export const dynamicParams = false;
 
 // Deterministic per-visit redemption code
 function genCode(seed: string): string {

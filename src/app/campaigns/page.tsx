@@ -7,7 +7,7 @@ import Image from "next/image";
 import { Monitor, Tv, MapPin, Calendar, Eye, ArrowRight, QrCode, BadgePercent } from "lucide-react";
 import CampaignMap from "@/components/CampaignMap";
 
-export const dynamic = "force-dynamic";
+
 
 export default async function CampaignsPage() {
   const c = dummyCampaign;
