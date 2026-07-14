@@ -10,6 +10,7 @@ import {
 import { useSession } from "@/lib/auth-client";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import BookMap from "@/components/BookMap";
+import { DAYPARTS, daypartMultiplier, daypartSummary } from "@/lib/dayparts";
 import { TemplateBuilder, renderTemplatePng, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
 import {
   MapPin, List, Map as MapIcon, Monitor, Calendar, ImagePlus, Wand2,
@@ -39,6 +40,7 @@ export default function BookPage() {
   const today = new Date().toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
+  const [dayparts, setDayparts] = useState<string[]>([]); // empty = all day
 
   const [name, setName] = useState("");
   const [creative, setCreative] = useState<CreativeChoice>({ kind: "none" });
@@ -72,7 +74,12 @@ export default function BookPage() {
   const selectedScreens = useMemo(() => (screens ?? []).filter((s) => selected.has(s.id)), [screens, selected]);
   const perDay = selectedScreens.reduce((sum, s) => sum + s.daily_price_usd, 0);
   const days = daysBetween(startDate, endDate);
-  const total = perDay * days;
+  const dpMult = daypartMultiplier(dayparts);
+  const total = Math.round(perDay * dpMult * days * 100) / 100;
+
+  function toggleDaypart(id: string) {
+    setDayparts((prev) => (prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id]));
+  }
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -113,6 +120,7 @@ export default function BookPage() {
         screen_ids: [...selected],
         creative_id: cr?.id ?? null,
         total_usd: total,
+        dayparts,
         status,
       });
       setDoneId(id);
@@ -284,8 +292,45 @@ export default function BookPage() {
                 className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none" />
             </div>
           </div>
+          <div className="mb-5">
+            <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Timing</label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setDayparts([])}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium border transition-colors ${
+                  dayparts.length === 0
+                    ? "bg-cy-400/15 text-cy-300 border-cy-400/40"
+                    : "border-line-800 text-ink-300 hover:text-ink-50 hover:border-line-700"
+                }`}
+              >
+                All day
+              </button>
+              {DAYPARTS.map((d) => {
+                const on = dayparts.includes(d.id);
+                return (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => toggleDaypart(d.id)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium border transition-colors ${
+                      on
+                        ? "bg-cy-400/15 text-cy-300 border-cy-400/40"
+                        : "border-line-800 text-ink-300 hover:text-ink-50 hover:border-line-700"
+                    }`}
+                  >
+                    {d.label} <span className="text-ink-500">{d.range}</span>
+                    {d.note === "cheaper" && <span className="text-[10px] uppercase tracking-wider text-lime-300">save</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {dayparts.length > 0 && dpMult < 1 && (
+              <p className="text-[11px] text-ink-500 mt-2">Targeted timing prices at {Math.round(dpMult * 100)}% of the full-day rate.</p>
+            )}
+          </div>
           <div className="card-tight p-4 flex items-center justify-between">
-            <span className="text-[13px] text-ink-400 flex items-center gap-1.5"><Calendar size={13} /> {days || "—"} day{days === 1 ? "" : "s"} × {fmtUsd(perDay)}/day</span>
+            <span className="text-[13px] text-ink-400 flex items-center gap-1.5"><Calendar size={13} /> {days || "—"} day{days === 1 ? "" : "s"} × {fmtUsd(perDay)}/day{dpMult < 1 ? ` × ${Math.round(dpMult * 100)}%` : ""}</span>
             <span className="text-lg font-semibold text-ink-50 tabular-nums">{fmtUsd(total)}</span>
           </div>
         </div>
@@ -342,6 +387,7 @@ export default function BookPage() {
           <div className="card-tight divide-y divide-line-900">
             <Row label="Screens" value={`${selected.size} selected · ${fmtUsd(perDay)}/day`} />
             <Row label="Flight" value={`${startDate} → ${endDate} · ${days} day${days === 1 ? "" : "s"}`} />
+            <Row label="Timing" value={daypartSummary(dayparts)} />
             <Row label="Creative" value={creative.kind === "none" ? "Attach later" : creative.kind === "upload" ? creative.file.name : `Template · ${tplSpec.preset}`} />
             <Row label="Total" value={fmtUsd(total)} strong />
           </div>

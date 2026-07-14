@@ -7,7 +7,8 @@ import {
   getCampaign, cancelDraft, signedCreativeUrl, startCheckout, daysBetween, fmtUsd,
   type CampaignDetail, type CampaignStatus,
 } from "@/lib/db";
-import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock } from "lucide-react";
+import { daypartSummary } from "@/lib/dayparts";
 
 const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
   draft:           { label: "Draft",            cls: "bg-bg-700/60 text-ink-200 border-line-700" },
@@ -105,6 +106,7 @@ function CampaignView() {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[13px] text-ink-400">
               <span className="inline-flex items-center gap-1.5"><Calendar size={13} />{c.start_date} → {c.end_date} · {days} day{days === 1 ? "" : "s"}</span>
               <span className="inline-flex items-center gap-1.5"><Monitor size={13} />{c.screens.length} screen{c.screens.length === 1 ? "" : "s"}</span>
+              <span className="inline-flex items-center gap-1.5"><Clock size={13} />{daypartSummary(c.dayparts ?? [])}</span>
             </div>
           </div>
           <div className="text-right shrink-0">
