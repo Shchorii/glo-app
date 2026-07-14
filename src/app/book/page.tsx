@@ -32,7 +32,7 @@ export default function BookPage() {
   const [screens, setScreens] = useState<Screen[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [view, setView] = useState<"list" | "map">("list");
+  const [view, setView] = useState<"list" | "map">("map");
   const [city, setCity] = useState<string>("all");
   const [venue, setVenue] = useState<string>("all");
 
@@ -191,8 +191,8 @@ export default function BookPage() {
               </select>
             </div>
             <div className="flex rounded-lg border border-line-800 overflow-hidden">
-              <ToggleBtn active={view === "list"} onClick={() => setView("list")} icon={List} label="List" />
               <ToggleBtn active={view === "map"} onClick={() => setView("map")} icon={MapIcon} label="Map" />
+              <ToggleBtn active={view === "list"} onClick={() => setView("list")} icon={List} label="List" />
             </div>
           </div>
 
@@ -202,7 +202,31 @@ export default function BookPage() {
           )}
 
           {screens && view === "map" && (
-            <BookMap screens={filtered} selected={selected} onToggle={toggle} />
+            <div>
+              <BookMap screens={filtered} selected={selected} onToggle={toggle} />
+              <p className="text-[11px] text-ink-500 mt-2">Tap a dot to select a screen. Selected screens glow cyan.</p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {filtered.map((s) => {
+                  const isSel = selected.has(s.id);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => toggle(s.id)}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[12px] border transition-colors ${
+                        isSel
+                          ? "bg-cy-400/15 text-cy-300 border-cy-400/40"
+                          : "bg-bg-900/60 text-ink-300 border-line-800 hover:border-line-700 hover:text-ink-100"
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${isSel ? "bg-cy-300 shadow-[0_0_6px_rgba(34,211,238,0.9)]" : "bg-lime-400 shadow-[0_0_6px_rgba(163,230,53,0.8)]"}`} />
+                      {s.name}
+                      <span className="text-ink-500 tabular-nums">${s.daily_price_usd}/d</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           )}
 
           {screens && view === "list" && (
