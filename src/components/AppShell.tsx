@@ -3,9 +3,10 @@ import { GloMark } from "./Logo";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
-import { Sparkles, Layers, Megaphone, BarChart3, Settings, Menu, X, LogOut } from "lucide-react";
+import { Sparkles, Layers, Megaphone, BarChart3, Settings, Menu, X, LogOut, PlusCircle } from "lucide-react";
 
 const NAV = [
+  { href: "/book",      label: "Book",      icon: PlusCircle },
   { href: "/studio",    label: "Studio",    icon: Sparkles },
   { href: "/library",   label: "Library",   icon: Layers },
   { href: "/campaigns", label: "Campaigns", icon: Megaphone },
