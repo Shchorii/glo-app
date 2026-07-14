@@ -2,10 +2,11 @@ import Link from "next/link";
 import Image from "next/image";
 import { dummyCreatives } from "@/lib/dummy-data";
 import { Play, Sparkles, Upload } from "lucide-react";
+import { PageContainer } from "@/components/PageContainer";
 
 export default function LibraryPage() {
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-10">
+    <PageContainer>
       <div className="flex flex-wrap items-baseline justify-between gap-3 mb-6 md:mb-8">
         <div>
           <p className="chip mb-3">Library</p>
@@ -47,6 +48,6 @@ export default function LibraryPage() {
           </div>
         ))}
       </div>
-    </div>
+    </PageContainer>
   );
 }

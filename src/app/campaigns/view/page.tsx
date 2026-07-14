@@ -5,21 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   getCampaign, cancelDraft, signedCreativeUrl, startCheckout, daysBetween, fmtUsd,
-  type CampaignDetail, type CampaignStatus,
+  CAMPAIGN_STATUS_META, type CampaignDetail,
 } from "@/lib/db";
 import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock } from "lucide-react";
 import { daypartSummary } from "@/lib/dayparts";
-
-const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
-  draft:           { label: "Draft",            cls: "bg-bg-700/60 text-ink-200 border-line-700" },
-  pending_payment: { label: "Reserved",         cls: "bg-cy-400/15 text-cy-300 border-cy-400/30" },
-  pending_review:  { label: "In review",        cls: "bg-amber-400/15 text-amber-300 border-amber-400/30" },
-  scheduled:       { label: "Scheduled",        cls: "bg-cy-400/15 text-cy-300 border-cy-400/30" },
-  live:            { label: "Live",             cls: "bg-lime-400/15 text-lime-300 border-lime-400/30" },
-  completed:       { label: "Completed",        cls: "bg-bg-700/60 text-ink-200 border-line-700" },
-  cancelled:       { label: "Cancelled",        cls: "bg-bg-700/60 text-ink-500 border-line-800" },
-  refunded:        { label: "Refunded",         cls: "bg-bg-700/60 text-ink-500 border-line-800" },
-};
 
 function CampaignView() {
   const params = useSearchParams();
@@ -63,7 +52,7 @@ function CampaignView() {
   }
 
   const days = daysBetween(c.start_date, c.end_date);
-  const meta = STATUS_META[c.status];
+  const meta = CAMPAIGN_STATUS_META[c.status];
   const isVideo = c.creative?.storage_path.endsWith(".mp4");
 
   async function onCancel() {

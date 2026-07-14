@@ -14,8 +14,9 @@ import { DAYPARTS, daypartMultiplier, daypartSummary } from "@/lib/dayparts";
 import { TemplateBuilder, renderTemplatePng, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
 import {
   MapPin, List, Map as MapIcon, Monitor, Calendar, ImagePlus, Wand2,
-  ChevronLeft, ChevronRight, Loader2, CheckCircle2, Upload,
+  ChevronLeft, ChevronRight, Loader2, CheckCircle2, Upload, type LucideIcon,
 } from "lucide-react";
+import { PageContainer } from "@/components/PageContainer";
 
 const STEPS = ["Screens", "Dates", "Creative", "Review"] as const;
 const MAX_UPLOAD_MB = 50;
@@ -432,19 +433,19 @@ export default function BookPage() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-10">
+    <PageContainer>
       <div className="mb-6">
         <p className="chip mb-3">Book · live inventory</p>
         <h1 className="text-2xl md:text-3xl font-semibold text-ink-50 tracking-tight">Book screens</h1>
         <p className="text-ink-400 mt-1.5 text-sm">Pick screens, pick dates, attach a creative. Sixty seconds to the street.</p>
       </div>
       {children}
-    </div>
+    </PageContainer>
   );
 }
 
 function ToggleBtn({ active, onClick, icon: Icon, label }: {
-  active: boolean; onClick: () => void; icon: React.ComponentType<{ size?: number }>; label: string;
+  active: boolean; onClick: () => void; icon: LucideIcon; label: string;
 }) {
   return (
     <button type="button" onClick={onClick}
@@ -457,7 +458,7 @@ function ToggleBtn({ active, onClick, icon: Icon, label }: {
 }
 
 function ChoiceBtn({ active, onClick, icon: Icon, label, asLabel, htmlFor }: {
-  active: boolean; onClick: () => void; icon: React.ComponentType<{ size?: number }>; label: string;
+  active: boolean; onClick: () => void; icon: LucideIcon; label: string;
   asLabel?: boolean; htmlFor?: string;
 }) {
   const cls = `inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[13px] font-medium border cursor-pointer transition-colors ${

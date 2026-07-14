@@ -4,20 +4,10 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSession } from "@/lib/auth-client";
 import { isSupabaseConfigured } from "@/lib/supabase";
-import { listMyCampaigns, daysBetween, fmtUsd, type Campaign, type CampaignStatus } from "@/lib/db";
+import { listMyCampaigns, daysBetween, fmtUsd, CAMPAIGN_STATUS_META, type Campaign } from "@/lib/db";
 import DemoCampaignShowcase from "@/components/DemoCampaignShowcase";
 import { Loader2, Monitor, Calendar, ArrowRight, Plus } from "lucide-react";
-
-const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
-  draft:           { label: "Draft",     cls: "bg-bg-700/60 text-ink-200 border-line-700" },
-  pending_payment: { label: "Reserved",  cls: "bg-cy-400/15 text-cy-300 border-cy-400/30" },
-  pending_review:  { label: "In review", cls: "bg-amber-400/15 text-amber-300 border-amber-400/30" },
-  scheduled:       { label: "Scheduled", cls: "bg-cy-400/15 text-cy-300 border-cy-400/30" },
-  live:            { label: "Live",      cls: "bg-lime-400/15 text-lime-300 border-lime-400/30" },
-  completed:       { label: "Completed", cls: "bg-bg-700/60 text-ink-200 border-line-700" },
-  cancelled:       { label: "Cancelled", cls: "bg-bg-700/60 text-ink-500 border-line-800" },
-  refunded:        { label: "Refunded",  cls: "bg-bg-700/60 text-ink-500 border-line-800" },
-};
+import { PageContainer } from "@/components/PageContainer";
 
 export default function CampaignsPage() {
   const { user, loading } = useSession();
@@ -32,7 +22,7 @@ export default function CampaignsPage() {
   const signedIn = Boolean(user) && isSupabaseConfigured;
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-10">
+    <PageContainer>
       <div className="flex flex-wrap items-baseline justify-between gap-4 mb-6 md:mb-8">
         <div>
           <p className="chip mb-3">Campaigns</p>
@@ -61,7 +51,7 @@ export default function CampaignsPage() {
           {campaigns && campaigns.length > 0 && (
             <div className="space-y-3">
               {campaigns.map((c) => {
-                const meta = STATUS_META[c.status];
+                const meta = CAMPAIGN_STATUS_META[c.status];
                 const days = daysBetween(c.start_date, c.end_date);
                 return (
                   <Link
@@ -99,6 +89,6 @@ export default function CampaignsPage() {
       )}
 
       {!loading && !signedIn && <DemoCampaignShowcase />}
-    </div>
+    </PageContainer>
   );
 }
