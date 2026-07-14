@@ -30,6 +30,7 @@ export type Campaign = {
   end_date: string;
   total_usd: number;
   status: CampaignStatus;
+  dayparts: string[];
   created_at: string;
   screen_count?: number;
 };
@@ -108,6 +109,7 @@ export type NewCampaign = {
   screen_ids: string[];
   creative_id: string | null;
   total_usd: number;
+  dayparts: string[];
   status: Extract<CampaignStatus, "draft" | "pending_payment">;
 };
 
@@ -126,6 +128,7 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
       end_date: input.end_date,
       creative_id: input.creative_id,
       total_usd: input.total_usd,
+      dayparts: input.dayparts.length ? input.dayparts : ["all_day"],
       status: input.status,
     })
     .select("id")
