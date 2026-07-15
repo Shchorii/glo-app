@@ -393,7 +393,7 @@ export default function BookPage() {
             <Row label="Total" value={fmtUsd(total)} strong />
           </div>
           <p className="text-[12px] text-ink-500">
-            Booking saves your campaign as reserved. Checkout opens in the next release; nothing is charged today.
+            Booking reserves your screens and dates. You complete payment from the campaign page; nothing is charged until checkout.
           </p>
           {saveErr && <p className="text-sm text-red-400">{saveErr}</p>}
         </div>

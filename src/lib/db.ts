@@ -131,6 +131,8 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
   const uid = auth.user?.id;
   if (!uid) throw new Error("Sign in to book screens.");
 
+  // RLS only allows attaching screens while a campaign is a draft, so we
+  // always insert as draft, link the screens, then flip to the requested status.
   const { data, error } = await client
     .from("campaigns")
     .insert({
@@ -141,7 +143,7 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
       creative_id: input.creative_id,
       total_usd: input.total_usd,
       dayparts: input.dayparts.length ? input.dayparts : ["all_day"],
-      status: input.status,
+      status: "draft",
     })
     .select("id")
     .single();
@@ -151,12 +153,23 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
   const links = input.screen_ids.map((screen_id) => ({ campaign_id: campaignId, screen_id }));
   const { error: linkErr } = await client.from("campaign_screens").insert(links);
   if (linkErr) throw linkErr;
+
+  if (input.status !== "draft") {
+    const { error: upErr } = await client.from("campaigns").update({ status: input.status }).eq("id", campaignId);
+    if (upErr) throw upErr;
+  }
   return campaignId;
 }
 
-/** Cancel is an owner-side status update; RLS permits updates only while draft. */
-export async function cancelDraft(id: string): Promise<void> {
+/** Cancel any unpaid campaign (draft or reserved); RLS blocks it once paid. */
+export async function cancelCampaign(id: string): Promise<void> {
   const { error } = await sb().from("campaigns").update({ status: "cancelled" }).eq("id", id);
+  if (error) throw error;
+}
+
+/** Permanently delete a draft, unpaid reservation, or cancelled campaign. */
+export async function deleteCampaign(id: string): Promise<void> {
+  const { error } = await sb().from("campaigns").delete().eq("id", id);
   if (error) throw error;
 }
 

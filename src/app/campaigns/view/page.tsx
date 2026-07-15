@@ -4,10 +4,10 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  getCampaign, cancelDraft, signedCreativeUrl, startCheckout, daysBetween, fmtUsd,
+  getCampaign, cancelCampaign, deleteCampaign, signedCreativeUrl, startCheckout, daysBetween, fmtUsd,
   CAMPAIGN_STATUS_META, type CampaignDetail,
 } from "@/lib/db";
-import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock } from "lucide-react";
+import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock, Trash2 } from "lucide-react";
 import { daypartSummary } from "@/lib/dayparts";
 
 function CampaignView() {
@@ -55,11 +55,27 @@ function CampaignView() {
   const meta = CAMPAIGN_STATUS_META[c.status];
   const isVideo = c.creative?.storage_path.endsWith(".mp4");
 
+  const canCancel = c.status === "draft" || c.status === "pending_payment";
+  const canDelete = canCancel || c.status === "cancelled";
+
   async function onCancel() {
-    if (!c || c === "loading" || c.status !== "draft") return;
+    if (!c || c === "loading") return;
     setBusy(true); setErr(null);
     try {
-      await cancelDraft(c.id);
+      await cancelCampaign(c.id);
+      router.push("/campaigns");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  async function onDelete() {
+    if (!c || c === "loading") return;
+    if (!window.confirm("Delete this campaign permanently? This cannot be undone.")) return;
+    setBusy(true); setErr(null);
+    try {
+      await deleteCampaign(c.id);
       router.push("/campaigns");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -162,16 +178,26 @@ function CampaignView() {
                 <div className="text-[13px] tabular-nums text-ink-200 shrink-0 ml-3">${s.daily_price_usd}/day</div>
               </div>
             ))}
+            {c.screens.length === 0 && (
+              <p className="text-[13px] text-ink-500 py-2.5">No screens attached. This can happen with older bookings; cancel and rebook to fix it.</p>
+            )}
           </div>
         </div>
 
         {err && <p className="text-sm text-red-400 mt-4">{err}</p>}
 
-        {c.status === "draft" && (
-          <div className="mt-6 pt-4 border-t border-line-900 flex justify-end">
-            <button type="button" disabled={busy} onClick={onCancel} className="btn btn-ghost text-red-300 hover:text-red-200 disabled:opacity-40">
-              {busy ? <Loader2 size={15} className="animate-spin" /> : <><XCircle size={15} /> Cancel draft</>}
-            </button>
+        {(canCancel || canDelete) && (
+          <div className="mt-6 pt-4 border-t border-line-900 flex justify-end gap-2">
+            {canCancel && (
+              <button type="button" disabled={busy} onClick={onCancel} className="btn btn-ghost disabled:opacity-40">
+                {busy ? <Loader2 size={15} className="animate-spin" /> : <><XCircle size={15} /> {c.status === "draft" ? "Cancel draft" : "Cancel reservation"}</>}
+              </button>
+            )}
+            {canDelete && (
+              <button type="button" disabled={busy} onClick={onDelete} className="btn btn-ghost text-red-300 hover:text-red-200 disabled:opacity-40">
+                {busy ? <Loader2 size={15} className="animate-spin" /> : <><Trash2 size={15} /> Delete</>}
+              </button>
+            )}
           </div>
         )}
       </div>
