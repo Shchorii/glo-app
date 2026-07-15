@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import "leaflet/dist/leaflet.css";
 import type { Screen } from "@/lib/db";
+import { fromPrice } from "@/lib/dayparts";
 
 /**
  * Screen-picking map: every available screen is a marker; tapping toggles selection.
@@ -49,7 +50,7 @@ export default function BookMap({
         const marker = L.marker([s.lat, s.lng], { icon: iconFor(L, false) }).addTo(map);
         marker.bindTooltip(
           `<div class="glo-tip"><div class="glo-tip-corner">${esc(s.name)}</div>
-           <div class="glo-tip-meta">${esc(s.city)} &middot; ${esc(s.venue_type)} &middot; $${s.daily_price_usd}/day &middot; tap to select</div></div>`,
+           <div class="glo-tip-meta">${esc(s.city)} &middot; ${esc(s.venue_type)} &middot; from $${fromPrice(s.daily_price_usd)}/day &middot; tap to select</div></div>`,
           { direction: "top", offset: [0, -16], opacity: 1 }
         );
         marker.on("click", () => onToggleRef.current(s.id));
