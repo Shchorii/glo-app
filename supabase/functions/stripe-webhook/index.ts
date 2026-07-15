@@ -16,8 +16,8 @@ async function getSecret(name: string): Promise<string | null> {
   try {
     const rows = await sql`select decrypted_secret from vault.decrypted_secrets where name = ${name} limit 1`;
     return (rows[0]?.decrypted_secret as string | undefined) ?? null;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`Could not read ${name} from Vault.`, { cause: error });
   } finally {
     await sql.end({ timeout: 2 });
   }
@@ -26,50 +26,93 @@ async function getSecret(name: string): Promise<string | null> {
 const cryptoProvider = Stripe.createSubtleCryptoProvider();
 
 Deno.serve(async (req) => {
-  try {
-    const sig = req.headers.get("stripe-signature");
-    if (!sig) return new Response("missing signature", { status: 400 });
+  const sig = req.headers.get("stripe-signature");
+  if (!sig) return new Response("missing signature", { status: 400 });
 
+  try {
     cachedKey = cachedKey ?? (await getSecret("STRIPE_SECRET_KEY"));
     cachedWhSecret = cachedWhSecret ?? (await getSecret("STRIPE_WEBHOOK_SECRET"));
     if (!cachedKey || !cachedWhSecret) return new Response("stripe not configured", { status: 503 });
+  } catch (error) {
+    console.error("Stripe secret resolution failed.", error);
+    return new Response("stripe configuration unavailable", { status: 500 });
+  }
 
-    const stripe = new Stripe(cachedKey, { httpClient: Stripe.createFetchHttpClient() });
-    const body = await req.text();
-    const event = await stripe.webhooks.constructEventAsync(body, sig, cachedWhSecret, undefined, cryptoProvider);
+  if (!cachedKey || !cachedWhSecret) return new Response("stripe not configured", { status: 503 });
+  const stripe = new Stripe(cachedKey, { httpClient: Stripe.createFetchHttpClient() });
+  const body = await req.text();
+  let event: Stripe.Event;
+  try {
+    event = await stripe.webhooks.constructEventAsync(body, sig, cachedWhSecret, undefined, cryptoProvider);
+  } catch (error) {
+    console.warn("Stripe webhook signature validation failed.", error);
+    return new Response("invalid signature", { status: 400 });
+  }
 
-    const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceRoleKey) {
+      return new Response("webhook service not configured", { status: 503 });
+    }
+    const admin = createClient(supabaseUrl, serviceRoleKey);
 
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
       const campaignId = session.metadata?.campaign_id;
-      await admin
+      if (!campaignId) throw new Error("Checkout session is missing campaign_id metadata.");
+      const { data: payment, error: paymentError } = await admin
         .from("payments")
         .update({
           status: "succeeded",
           stripe_payment_intent: typeof session.payment_intent === "string" ? session.payment_intent : null,
           updated_at: new Date().toISOString(),
         })
-        .eq("stripe_session_id", session.id);
-      if (campaignId) {
-        await admin
+        .eq("stripe_session_id", session.id)
+        .select("id")
+        .maybeSingle();
+      if (paymentError) throw paymentError;
+      if (!payment) throw new Error(`Payment record not found for Checkout session ${session.id}.`);
+
+      const { data: updatedCampaign, error: campaignError } = await admin
+        .from("campaigns")
+        .update({ status: "pending_review", paid_at: new Date().toISOString() })
+        .eq("id", campaignId)
+        .eq("status", "pending_payment")
+        .select("id")
+        .maybeSingle();
+      if (campaignError) throw campaignError;
+      if (!updatedCampaign) {
+        const { data: campaign, error: lookupError } = await admin
           .from("campaigns")
-          .update({ status: "pending_review", paid_at: new Date().toISOString() })
+          .select("status")
           .eq("id", campaignId)
-          .eq("status", "pending_payment");
+          .maybeSingle();
+        if (lookupError) throw lookupError;
+        const alreadyProcessed =
+          campaign &&
+          ["pending_review", "scheduled", "live", "completed"].includes(campaign.status);
+        if (!alreadyProcessed) {
+          throw new Error(`Campaign ${campaignId} could not transition to pending_review.`);
+        }
       }
     } else if (event.type === "checkout.session.expired") {
       const session = event.data.object as Stripe.Checkout.Session;
-      await admin
+      const { data: payment, error: paymentError } = await admin
         .from("payments")
         .update({ status: "expired", updated_at: new Date().toISOString() })
-        .eq("stripe_session_id", session.id);
+        .eq("stripe_session_id", session.id)
+        .select("id")
+        .maybeSingle();
+      if (paymentError) throw paymentError;
+      if (!payment) throw new Error(`Payment record not found for Checkout session ${session.id}.`);
     }
 
     return new Response(JSON.stringify({ received: true }), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (e) {
-    return new Response(`webhook error: ${e instanceof Error ? e.message : String(e)}`, { status: 400 });
+    console.error("Stripe webhook processing failed.", e);
+    return new Response("webhook processing failed", { status: 500 });
   }
 });

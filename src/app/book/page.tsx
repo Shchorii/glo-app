@@ -27,7 +27,7 @@ type CreativeChoice =
 
 export default function BookPage() {
   const router = useRouter();
-  const { user, loading } = useSession();
+  const { user, loading, error: authError } = useSession();
 
   const [step, setStep] = useState(0);
   const [screens, setScreens] = useState<Screen[] | null>(null);
@@ -54,10 +54,10 @@ export default function BookPage() {
 
   // Auth gate
   useEffect(() => {
-    if (!loading && isSupabaseConfigured && !user) {
+    if (!loading && !authError && isSupabaseConfigured && !user) {
       router.replace("/sign-in?next=/book");
     }
-  }, [loading, user, router]);
+  }, [loading, authError, user, router]);
 
   // Load screens
   useEffect(() => {
@@ -133,6 +133,9 @@ export default function BookPage() {
 
   if (!isSupabaseConfigured) {
     return <Shell><p className="text-ink-400 text-sm">Booking is not configured in this build.</p></Shell>;
+  }
+  if (authError) {
+    return <Shell><p className="text-red-400 text-sm">Session could not be loaded: {authError.message}</p></Shell>;
   }
   if (loading || (!user && isSupabaseConfigured)) {
     return <Shell><div className="flex items-center gap-2 text-ink-400 text-sm"><Loader2 size={15} className="animate-spin" /> Loading…</div></Shell>;

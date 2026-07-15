@@ -70,8 +70,8 @@ export function SupportChat() {
       try {
         if (sessionStorage.getItem("glo_greeted") === "1") return;
         sessionStorage.setItem("glo_greeted", "1");
-      } catch {
-        /* sessionStorage unavailable (private mode) — greet anyway */
+      } catch (error) {
+        console.warn("Could not persist support chat greeting state.", error);
       }
       setGreet(true);
       dismissTimer = window.setTimeout(() => setGreet(false), 5200);
@@ -103,10 +103,18 @@ export function SupportChat() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: apiMessages }),
       });
-      const data = (await res.json().catch(() => ({}))) as {
+      let data: {
         message?: { role: string; content: string };
         error?: string;
       };
+      try {
+        data = await res.json();
+      } catch (error) {
+        throw new Error(
+          res.ok ? "Support chat returned an invalid response." : `Request failed (${res.status})`,
+          { cause: error }
+        );
+      }
       if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
 
       const content = data.message?.content?.trim();

@@ -7,12 +7,24 @@ const CORS = {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
-  let code = "JP-FRIDAY10";
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+
+  let body: unknown;
   try {
-    const body = await req.json();
-    if (typeof body?.code === "string") code = body.code;
-  } catch { /* default */ }
-  return new Response(JSON.stringify({ ok: true, code }), {
-    headers: { ...CORS, "Content-Type": "application/json" },
-  });
+    body = await req.json();
+  } catch {
+    return json({ error: "Request body must be valid JSON." }, 400);
+  }
+  const code =
+    typeof body === "object" && body !== null && "code" in body
+      ? (body as { code?: unknown }).code
+      : null;
+  if (typeof code !== "string" || !code.trim()) {
+    return json({ error: "code must be a non-empty string." }, 400);
+  }
+  return json({ ok: true, code });
 });

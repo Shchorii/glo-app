@@ -115,7 +115,8 @@ export type NewCampaign = {
 
 export async function createCampaign(input: NewCampaign): Promise<string> {
   const client = sb();
-  const { data: auth } = await client.auth.getUser();
+  const { data: auth, error: authError } = await client.auth.getUser();
+  if (authError) throw authError;
   const uid = auth.user?.id;
   if (!uid) throw new Error("Sign in to book screens.");
 
@@ -143,22 +144,41 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
   if (linkErr) throw linkErr;
 
   if (input.status !== "draft") {
-    const { error: upErr } = await client.from("campaigns").update({ status: input.status }).eq("id", campaignId);
+    const { data: updatedCampaign, error: upErr } = await client
+      .from("campaigns")
+      .update({ status: input.status })
+      .eq("id", campaignId)
+      .select("id")
+      .maybeSingle();
     if (upErr) throw upErr;
+    if (!updatedCampaign) throw new Error("Campaign status could not be updated.");
   }
   return campaignId;
 }
 
 /** Cancel any unpaid campaign (draft or reserved); RLS blocks it once paid. */
 export async function cancelCampaign(id: string): Promise<void> {
-  const { error } = await sb().from("campaigns").update({ status: "cancelled" }).eq("id", id);
+  const { data, error } = await sb()
+    .from("campaigns")
+    .update({ status: "cancelled" })
+    .eq("id", id)
+    .in("status", ["draft", "pending_payment"])
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error("Campaign could not be cancelled. Refresh and try again.");
 }
 
 /** Permanently delete a draft, unpaid reservation, or cancelled campaign. */
 export async function deleteCampaign(id: string): Promise<void> {
-  const { error } = await sb().from("campaigns").delete().eq("id", id);
+  const { data, error } = await sb()
+    .from("campaigns")
+    .delete()
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error("Campaign could not be deleted. Refresh and try again.");
 }
 
 export async function uploadCreative(
@@ -166,7 +186,8 @@ export async function uploadCreative(
   opts: { source: "upload" | "template"; ext: string; width?: number; height?: number; duration?: number }
 ): Promise<Creative> {
   const client = sb();
-  const { data: auth } = await client.auth.getUser();
+  const { data: auth, error: authError } = await client.auth.getUser();
+  if (authError) throw authError;
   const uid = auth.user?.id;
   if (!uid) throw new Error("Sign in to upload creatives.");
 
@@ -189,13 +210,22 @@ export async function uploadCreative(
     })
     .select("*")
     .single();
-  if (error) throw error;
+  if (error) {
+    const { error: cleanupError } = await client.storage.from("creatives").remove([path]);
+    if (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Creative metadata could not be saved, and the uploaded file could not be removed."
+      );
+    }
+    throw error;
+  }
   return data as Creative;
 }
 
-export async function signedCreativeUrl(path: string): Promise<string | null> {
+export async function signedCreativeUrl(path: string): Promise<string> {
   const { data, error } = await sb().storage.from("creatives").createSignedUrl(path, 3600);
-  if (error) return null;
+  if (error) throw error;
   return data.signedUrl;
 }
 
@@ -203,7 +233,8 @@ export async function signedCreativeUrl(path: string): Promise<string | null> {
 export async function startCheckout(campaignId: string): Promise<string> {
   if (!CHECKOUT_ENDPOINT) throw new Error("Checkout is not configured in this build.");
   const client = sb();
-  const { data } = await client.auth.getSession();
+  const { data, error: sessionError } = await client.auth.getSession();
+  if (sessionError) throw sessionError;
   const token = data.session?.access_token;
   if (!token) throw new Error("Sign in to pay.");
   const res = await fetch(CHECKOUT_ENDPOINT, {
@@ -215,7 +246,15 @@ export async function startCheckout(campaignId: string): Promise<string> {
     },
     body: JSON.stringify({ campaign_id: campaignId }),
   });
-  const body = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+  let body: { url?: string; error?: string };
+  try {
+    body = await res.json();
+  } catch (error) {
+    throw new Error(
+      res.ok ? "Checkout returned an invalid response." : `Checkout failed (${res.status})`,
+      { cause: error }
+    );
+  }
   if (!res.ok || !body.url) throw new Error(body.error || `Checkout failed (${res.status})`);
   return body.url;
 }

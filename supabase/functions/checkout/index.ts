@@ -21,8 +21,8 @@ async function getSecret(name: string): Promise<string | null> {
   try {
     const rows = await sql`select decrypted_secret from vault.decrypted_secrets where name = ${name} limit 1`;
     return (rows[0]?.decrypted_secret as string | undefined) ?? null;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`Could not read ${name} from Vault.`, { cause: error });
   } finally {
     await sql.end({ timeout: 2 });
   }
@@ -55,12 +55,26 @@ Deno.serve(async (req) => {
     new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
   try {
-    const { campaign_id } = await req.json();
-    if (!campaign_id) return json({ error: "campaign_id required" }, 400);
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "Request body must be valid JSON." }, 400);
+    }
+    const campaignId =
+      typeof body === "object" && body !== null && "campaign_id" in body
+        ? (body as { campaign_id?: unknown }).campaign_id
+        : null;
+    if (typeof campaignId !== "string" || !campaignId) {
+      return json({ error: "campaign_id required" }, 400);
+    }
 
-    const url = Deno.env.get("SUPABASE_URL")!;
-    const anon = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const url = Deno.env.get("SUPABASE_URL");
+    const anon = Deno.env.get("SUPABASE_ANON_KEY");
+    const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!url || !anon || !service) {
+      return json({ error: "Checkout service is not configured." }, 503);
+    }
 
     // Identify the caller from their JWT
     const authed = createClient(url, anon, {
@@ -75,7 +89,7 @@ Deno.serve(async (req) => {
     const { data: c, error: cErr } = await admin
       .from("campaigns")
       .select("id, user_id, name, start_date, end_date, status, dayparts, campaign_screens(screens(daily_price_usd))")
-      .eq("id", campaign_id)
+      .eq("id", campaignId)
       .maybeSingle();
     if (cErr) throw cErr;
     if (!c || c.user_id !== user.id) return json({ error: "Campaign not found." }, 404);
@@ -116,9 +130,17 @@ Deno.serve(async (req) => {
       customer_email: user.email ?? undefined,
       metadata: { campaign_id: c.id, user_id: user.id },
     });
+    if (!session.url) throw new Error("Stripe did not return a Checkout URL.");
 
     // Keep the stored total honest and record the payment attempt
-    await admin.from("campaigns").update({ total_usd: total, status: "pending_payment" }).eq("id", c.id);
+    const { data: updatedCampaign, error: campaignUpdateError } = await admin
+      .from("campaigns")
+      .update({ total_usd: total, status: "pending_payment" })
+      .eq("id", c.id)
+      .select("id")
+      .maybeSingle();
+    if (campaignUpdateError) throw campaignUpdateError;
+    if (!updatedCampaign) throw new Error("Campaign could not be reserved for payment.");
     const { error: pErr } = await admin.from("payments").insert({
       campaign_id: c.id,
       user_id: user.id,
@@ -131,6 +153,7 @@ Deno.serve(async (req) => {
 
     return json({ url: session.url });
   } catch (e) {
-    return json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    console.error("Checkout session creation failed.", e);
+    return json({ error: "Checkout could not be started. Please try again." }, 500);
   }
 });

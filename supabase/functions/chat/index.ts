@@ -47,8 +47,14 @@ async function getOpenAIKey(): Promise<string> {
       const rows = await sql`select decrypted_secret from vault.decrypted_secrets where name = 'OPENAI_API_KEY' limit 1`;
       const key = rows[0]?.decrypted_secret as string | undefined;
       if (key) { cachedKey = key; return key; }
-    } catch { /* fall through to env */ } finally {
-      await sql.end({ timeout: 2 });
+    } catch (error) {
+      console.warn("OpenAI key lookup in Vault failed; trying environment fallback.", error);
+    } finally {
+      try {
+        await sql.end({ timeout: 2 });
+      } catch (error) {
+        console.warn("Vault connection cleanup failed.", error);
+      }
     }
   }
   const envKey = Deno.env.get("OPENAI_API_KEY");
@@ -58,10 +64,33 @@ async function getOpenAIKey(): Promise<string> {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+
+  let body: unknown;
   try {
-    const { messages } = await req.json();
-    if (!Array.isArray(messages)) throw new Error("bad payload");
-    const apiKey = await getOpenAIKey();
+    body = await req.json();
+  } catch {
+    return json({ error: "Request body must be valid JSON." }, 400);
+  }
+  const messages =
+    typeof body === "object" && body !== null && "messages" in body
+      ? (body as { messages?: unknown }).messages
+      : null;
+  if (!Array.isArray(messages)) return json({ error: "messages must be an array." }, 400);
+
+  let apiKey: string;
+  try {
+    apiKey = await getOpenAIKey();
+  } catch (error) {
+    console.error("OpenAI key resolution failed.", error);
+    return json({ error: "Support chat is temporarily unavailable." }, 503);
+  }
+
+  try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -75,16 +104,21 @@ Deno.serve(async (req) => {
         max_tokens: 700,
       }),
     });
-    if (!res.ok) throw new Error(`openai ${res.status}`);
-    const data = await res.json();
+    if (!res.ok) {
+      console.error(`OpenAI request failed with status ${res.status}.`);
+      return json({ error: "Support chat could not generate a reply." }, 502);
+    }
+    const data = await res.json() as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
     const reply = (data.choices?.[0]?.message?.content ?? "").trim().slice(0, 4000);
-    return new Response(JSON.stringify({ reply, message: { role: "assistant", content: reply } }), {
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
-  } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
-      status: 400,
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
+    if (!reply) {
+      console.error("OpenAI returned an empty support chat reply.");
+      return json({ error: "Support chat returned an empty reply." }, 502);
+    }
+    return json({ reply, message: { role: "assistant", content: reply } });
+  } catch (error) {
+    console.error("OpenAI request failed.", error);
+    return json({ error: "Support chat could not be reached." }, 502);
   }
 });

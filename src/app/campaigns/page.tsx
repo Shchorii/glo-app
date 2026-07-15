@@ -20,7 +20,7 @@ const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
 };
 
 export default function CampaignsPage() {
-  const { user, loading } = useSession();
+  const { user, loading, error: authError } = useSession();
   const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -46,6 +46,10 @@ export default function CampaignsPage() {
         <div className="flex items-center gap-2 text-ink-400 text-sm py-10 justify-center">
           <Loader2 size={15} className="animate-spin" /> Loading…
         </div>
+      )}
+
+      {!loading && authError && (
+        <p className="text-sm text-red-400 mb-4">Session could not be loaded: {authError.message}</p>
       )}
 
       {!loading && signedIn && (
@@ -98,7 +102,7 @@ export default function CampaignsPage() {
         </>
       )}
 
-      {!loading && !signedIn && <DemoCampaignShowcase />}
+      {!loading && !authError && !signedIn && <DemoCampaignShowcase />}
     </div>
   );
 }
