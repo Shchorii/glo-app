@@ -1,13 +1,15 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+
+const RESERVATION_WINDOW_MS = 5 * 60 * 1000;
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   getCampaign, cancelCampaign, deleteCampaign, signedCreativeUrl, startCheckout, daysBetween, fmtUsd,
   type CampaignDetail, type CampaignStatus,
 } from "@/lib/db";
-import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock, Trash2 } from "lucide-react";
+import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock, Trash2, Timer } from "lucide-react";
 import { daypartSummary } from "@/lib/dayparts";
 
 const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
@@ -28,6 +30,7 @@ function CampaignView() {
   const justPaid = params.get("paid") === "1";
   const [c, setC] = useState<CampaignDetail | null | "loading">("loading");
   const [paying, setPaying] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -49,6 +52,28 @@ function CampaignView() {
       return () => window.clearTimeout(t);
     }
   }, [id, justPaid]);
+
+  // 5-minute reservation countdown
+  useEffect(() => {
+    if (c === "loading" || !c || c.status !== "pending_payment" || !c.reserved_at || justPaid) {
+      setSecondsLeft(null);
+      return;
+    }
+    const deadline = Date.parse(c.reserved_at) + RESERVATION_WINDOW_MS;
+    const tick = () => setSecondsLeft(Math.max(0, Math.round((deadline - Date.now()) / 1000)));
+    tick();
+    const t = window.setInterval(tick, 1000);
+    return () => window.clearInterval(t);
+  }, [c, justPaid]);
+
+  // Once expired, poll until the slot is released server-side
+  useEffect(() => {
+    if (secondsLeft !== 0 || !id) return;
+    const t = window.setInterval(() => {
+      getCampaign(id).then((res) => res && setC(res)).catch(() => {});
+    }, 8000);
+    return () => window.clearInterval(t);
+  }, [secondsLeft, id]);
 
   if (c === "loading") {
     return <div className="flex items-center gap-2 text-ink-400 text-sm py-12 justify-center"><Loader2 size={15} className="animate-spin" /> Loading campaign…</div>;
@@ -136,12 +161,24 @@ function CampaignView() {
             <CheckCircle2 size={15} className="shrink-0" /> Payment received. Your campaign is moving to review; this page will update in a moment.
           </div>
         )}
-        {c.status === "pending_payment" && !justPaid && (
+        {c.status === "pending_payment" && !justPaid && secondsLeft !== 0 && (
           <div className="rounded-lg border border-cy-400/30 bg-cy-400/5 px-4 py-3 mb-5 flex flex-wrap items-center justify-between gap-3">
-            <span className="text-[13px] text-cy-200">Reserved. Your screens and dates are held; complete payment to send it to review.</span>
+            <span className="text-[13px] text-cy-200">
+              Reserved. Your screens are held for
+              {" "}
+              <span className={`font-semibold tabular-nums ${secondsLeft !== null && secondsLeft <= 60 ? "text-red-300" : "text-lime-300"}`}>
+                {secondsLeft !== null ? fmtClock(secondsLeft) : "05:00"}
+              </span>
+              . Complete payment before the slot is released.
+            </span>
             <button type="button" disabled={paying} onClick={onPay} className="btn btn-lime disabled:opacity-40">
               {paying ? <Loader2 size={15} className="animate-spin" /> : <><CreditCard size={15} /> Complete payment · {fmtUsd(c.total_usd)}</>}
             </button>
+          </div>
+        )}
+        {c.status === "pending_payment" && !justPaid && secondsLeft === 0 && (
+          <div className="rounded-lg border border-red-400/30 bg-red-400/5 px-4 py-3 text-[13px] text-red-200 mb-5 flex items-center gap-2">
+            <Timer size={15} className="shrink-0" /> Reservation expired. The slot was released; book again to grab it back.
           </div>
         )}
         {c.status === "pending_review" && (
@@ -214,6 +251,12 @@ function CampaignView() {
       </div>
     </div>
   );
+}
+
+function fmtClock(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60).toString().padStart(2, "0");
+  const s = (totalSeconds % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
 }
 
 export default function CampaignViewPage() {
