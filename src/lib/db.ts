@@ -44,6 +44,7 @@ export type CampaignDetail = Campaign & {
 export type Creative = {
   id: string;
   user_id: string;
+  name: string | null;
   storage_path: string;
   source: "upload" | "template";
   width_px: number | null;
@@ -51,6 +52,7 @@ export type Creative = {
   duration_s: number | null;
   review_status: "pending" | "approved" | "rejected";
   rejection_reason: string | null;
+  created_at: string;
 };
 
 function sb() {
@@ -164,7 +166,7 @@ export async function deleteCampaign(id: string): Promise<void> {
 
 export async function uploadCreative(
   blob: Blob,
-  opts: { source: "upload" | "template"; ext: string; width?: number; height?: number; duration?: number }
+  opts: { source: "upload" | "template"; ext: string; name?: string; width?: number; height?: number; duration?: number }
 ): Promise<Creative> {
   const client = sb();
   const { data: auth } = await client.auth.getUser();
@@ -184,6 +186,7 @@ export async function uploadCreative(
       user_id: uid,
       storage_path: path,
       source: opts.source,
+      name: opts.name ?? null,
       width_px: opts.width ?? null,
       height_px: opts.height ?? null,
       duration_s: opts.duration ?? null,
@@ -192,6 +195,30 @@ export async function uploadCreative(
     .single();
   if (error) throw error;
   return data as Creative;
+}
+
+/** All of the signed-in user's creatives, newest first. */
+export async function listMyCreatives(): Promise<Creative[]> {
+  const { data, error } = await sb()
+    .from("creatives")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as Creative[];
+}
+
+/**
+ * Delete a creative and its file. Fails with a friendly error when the
+ * creative is attached to a campaign (FK guard).
+ */
+export async function deleteCreative(c: Creative): Promise<void> {
+  const client = sb();
+  const { error } = await client.from("creatives").delete().eq("id", c.id);
+  if (error) {
+    if (error.code === "23503") throw new Error("This creative is attached to a campaign, so it stays in your library.");
+    throw error;
+  }
+  await client.storage.from("creatives").remove([c.storage_path]).catch(() => {});
 }
 
 export async function signedCreativeUrl(path: string): Promise<string | null> {
