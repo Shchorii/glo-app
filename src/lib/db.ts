@@ -119,6 +119,8 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
   const uid = auth.user?.id;
   if (!uid) throw new Error("Sign in to book screens.");
 
+  // RLS only allows attaching screens while a campaign is a draft, so we
+  // always insert as draft, link the screens, then flip to the requested status.
   const { data, error } = await client
     .from("campaigns")
     .insert({
@@ -129,7 +131,7 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
       creative_id: input.creative_id,
       total_usd: input.total_usd,
       dayparts: input.dayparts.length ? input.dayparts : ["all_day"],
-      status: input.status,
+      status: "draft",
     })
     .select("id")
     .single();
@@ -139,6 +141,11 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
   const links = input.screen_ids.map((screen_id) => ({ campaign_id: campaignId, screen_id }));
   const { error: linkErr } = await client.from("campaign_screens").insert(links);
   if (linkErr) throw linkErr;
+
+  if (input.status !== "draft") {
+    const { error: upErr } = await client.from("campaigns").update({ status: input.status }).eq("id", campaignId);
+    if (upErr) throw upErr;
+  }
   return campaignId;
 }
 
