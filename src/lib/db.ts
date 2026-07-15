@@ -220,6 +220,48 @@ export async function startCheckout(campaignId: string): Promise<string> {
   return body.url;
 }
 
+/** The signed-in user's role from their profile ("customer" | "admin"). */
+export async function myRole(): Promise<string | null> {
+  const client = sb();
+  const { data: auth } = await client.auth.getUser();
+  if (!auth.user) return null;
+  const { data } = await client.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  return (data?.role as string | undefined) ?? "customer";
+}
+
+export type ReviewItem = Campaign & {
+  creative: Creative | null;
+  screens: { name: string; city: string }[];
+};
+
+/** Admin only: campaigns waiting for creative review. */
+export async function adminReviewQueue(): Promise<ReviewItem[]> {
+  const { data, error } = await sb()
+    .from("campaigns")
+    .select("*, creatives(*), campaign_screens(screens(name, city))")
+    .eq("status", "pending_review")
+    .order("paid_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((c) => ({
+    ...(c as unknown as Campaign),
+    total_usd: Number(c.total_usd),
+    creative: (c.creatives as Creative | null) ?? null,
+    screens: ((c.campaign_screens as { screens: { name: string; city: string } }[] | null) ?? [])
+      .map((cs) => cs.screens)
+      .filter(Boolean),
+  }));
+}
+
+export async function approveCampaign(id: string): Promise<void> {
+  const { error } = await sb().rpc("approve_campaign", { cid: id });
+  if (error) throw error;
+}
+
+export async function rejectCreative(id: string, reason: string): Promise<void> {
+  const { error } = await sb().rpc("reject_creative", { cid: id, reason });
+  if (error) throw error;
+}
+
 export function daysBetween(start: string, end: string): number {
   const s = new Date(`${start}T00:00:00Z`).getTime();
   const e = new Date(`${end}T00:00:00Z`).getTime();
