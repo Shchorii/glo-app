@@ -48,6 +48,7 @@ export default function BookPage() {
     preset: "glow", headline: "", subline: "", accent: "#22D3EE",
   });
 
+  const [reviewPreview, setReviewPreview] = useState<{ url: string; isVideo: boolean } | null>(null);
   const [saving, setSaving] = useState<"idle" | "draft" | "book">("idle");
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [doneId, setDoneId] = useState<string | null>(null);
@@ -64,6 +65,30 @@ export default function BookPage() {
     if (!isSupabaseConfigured) return;
     listScreens().then(setScreens).catch((e) => setLoadErr(String(e?.message ?? e)));
   }, []);
+
+  // Build a creative preview for the review step
+  useEffect(() => {
+    if (step !== 3) return;
+    let url: string | null = null;
+    let cancelled = false;
+    (async () => {
+      if (creative.kind === "upload") {
+        url = URL.createObjectURL(creative.file);
+        if (!cancelled) setReviewPreview({ url, isVideo: creative.file.type.startsWith("video/") });
+      } else if (creative.kind === "template") {
+        const blob = await renderTemplatePng(tplSpec);
+        url = URL.createObjectURL(blob);
+        if (!cancelled) setReviewPreview({ url, isVideo: false });
+      } else {
+        setReviewPreview(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+      setReviewPreview(null);
+    };
+  }, [step, creative, tplSpec]);
 
   const cities = useMemo(() => Array.from(new Set((screens ?? []).map((s) => s.city))), [screens]);
   const venues = useMemo(() => Array.from(new Set((screens ?? []).map((s) => s.venue_type))), [screens]);
@@ -384,6 +409,19 @@ export default function BookPage() {
               placeholder={`${selectedScreens[0]?.city ?? "Glo"} campaign`}
               className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none placeholder-ink-500" />
           </div>
+          {reviewPreview && (
+            <div className="card-tight p-3">
+              <div className="text-xs uppercase tracking-wider text-ink-400 mb-2">Creative preview</div>
+              <div className="rounded-md overflow-hidden border border-line-800 bg-bg-900 flex items-center justify-center">
+                {reviewPreview.isVideo ? (
+                  <video src={reviewPreview.url} className="max-h-56 w-auto" controls muted playsInline autoPlay loop />
+                ) : (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img src={reviewPreview.url} alt="Creative preview" className="max-h-56 w-auto" />
+                )}
+              </div>
+            </div>
+          )}
           <div className="card-tight divide-y divide-line-900">
             <Row label="Screens" value={`${selected.size} selected · ${fmtUsd(perDay)}/day`} />
             <Row label="Flight" value={`${startDate} → ${endDate} · ${days} day${days === 1 ? "" : "s"}`} />
@@ -472,7 +510,7 @@ function ChoiceBtn({ active, onClick, icon: Icon, label, asLabel, htmlFor }: {
 function Row({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
     <div className="flex items-center justify-between px-4 py-3">
-      <span className="text-[12px] uppercase tracking-wider text-ink-400">{label}</span>
+      <span className="text-[12px] uppercase tracking-wider text-ink-400 tabular-nums">{label}</span>
       <span className={`text-[14px] tabular-nums ${strong ? "font-semibold text-lime-300" : "text-ink-100"}`}>{value}</span>
     </div>
   );
