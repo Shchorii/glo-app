@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  listScreens, createCampaign, uploadCreative, daysBetween, fmtUsd,
+  listScreens, createCampaign, uploadCreative, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
   type Screen, type Creative,
 } from "@/lib/db";
 import { useSession } from "@/lib/auth-client";
@@ -13,7 +13,7 @@ import BookMap from "@/components/BookMap";
 import { DAYPARTS, daypartMultiplier, daypartSummary, fromPrice } from "@/lib/dayparts";
 import { TemplateBuilder, renderTemplatePng, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
 import {
-  MapPin, List, Map as MapIcon, Monitor, Calendar, ImagePlus, Wand2,
+  MapPin, List, Map as MapIcon, Monitor, Calendar, ImagePlus, Wand2, FolderOpen,
   ChevronLeft, ChevronRight, Loader2, CheckCircle2, Upload,
 } from "lucide-react";
 
@@ -23,7 +23,8 @@ const MAX_UPLOAD_MB = 50;
 type CreativeChoice =
   | { kind: "none" }
   | { kind: "upload"; file: File }
-  | { kind: "template"; spec: TemplateSpec };
+  | { kind: "template"; spec: TemplateSpec }
+  | { kind: "library"; creative: Creative };
 
 export default function BookPage() {
   const router = useRouter();
@@ -49,6 +50,9 @@ export default function BookPage() {
   });
 
   const [reviewPreview, setReviewPreview] = useState<{ url: string; isVideo: boolean } | null>(null);
+  const [libItems, setLibItems] = useState<Creative[] | null>(null);
+  const [libUrls, setLibUrls] = useState<Record<string, string>>({});
+  const [showLib, setShowLib] = useState(false);
   const [saving, setSaving] = useState<"idle" | "draft" | "book">("idle");
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [doneId, setDoneId] = useState<string | null>(null);
@@ -66,6 +70,18 @@ export default function BookPage() {
     listScreens().then(setScreens).catch((e) => setLoadErr(String(e?.message ?? e)));
   }, []);
 
+  // Load the library the first time the picker opens
+  useEffect(() => {
+    if (!showLib || libItems !== null) return;
+    listMyCreatives()
+      .then(async (all) => {
+        setLibItems(all);
+        const entries = await Promise.all(all.map(async (c) => [c.id, await signedCreativeUrl(c.storage_path)] as const));
+        setLibUrls(Object.fromEntries(entries.filter(([, u]) => u) as [string, string][]));
+      })
+      .catch(() => setLibItems([]));
+  }, [showLib, libItems]);
+
   // Build a creative preview for the review step
   useEffect(() => {
     if (step !== 3) return;
@@ -79,6 +95,9 @@ export default function BookPage() {
         const blob = await renderTemplatePng(tplSpec);
         url = URL.createObjectURL(blob);
         if (!cancelled) setReviewPreview({ url, isVideo: false });
+      } else if (creative.kind === "library") {
+        const signed = await signedCreativeUrl(creative.creative.storage_path);
+        if (!cancelled && signed) setReviewPreview({ url: signed, isVideo: creative.creative.storage_path.endsWith(".mp4") });
       } else {
         setReviewPreview(null);
       }
@@ -121,6 +140,7 @@ export default function BookPage() {
     false;
 
   async function resolveCreative(): Promise<Creative | null> {
+    if (creative.kind === "library") return creative.creative;
     if (creative.kind === "upload") {
       const file = creative.file;
       const ext = (file.name.split(".").pop() || "bin").toLowerCase();
@@ -365,9 +385,10 @@ export default function BookPage() {
       {step === 2 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-5">
-            <ChoiceBtn active={creative.kind === "upload"} onClick={() => setCreative(creative.kind === "upload" ? creative : { kind: "none" })} icon={ImagePlus} label="Upload" asLabel htmlFor="creative-file" />
-            <ChoiceBtn active={creative.kind === "template"} onClick={() => setCreative({ kind: "template", spec: tplSpec })} icon={Wand2} label="Use a template" />
-            <ChoiceBtn active={creative.kind === "none"} onClick={() => setCreative({ kind: "none" })} icon={ChevronRight} label="Skip for now" />
+            <ChoiceBtn active={creative.kind === "upload"} onClick={() => { setShowLib(false); setCreative(creative.kind === "upload" ? creative : { kind: "none" }); }} icon={ImagePlus} label="Upload" asLabel htmlFor="creative-file" />
+            <ChoiceBtn active={creative.kind === "template"} onClick={() => { setShowLib(false); setCreative({ kind: "template", spec: tplSpec }); }} icon={Wand2} label="Use a template" />
+            <ChoiceBtn active={creative.kind === "library"} onClick={() => setShowLib(true)} icon={FolderOpen} label="From library" />
+            <ChoiceBtn active={creative.kind === "none"} onClick={() => { setShowLib(false); setCreative({ kind: "none" }); }} icon={ChevronRight} label="Skip for now" />
           </div>
           <input
             id="creative-file"
@@ -394,7 +415,49 @@ export default function BookPage() {
           {creative.kind === "template" && (
             <TemplateBuilder spec={tplSpec} onChange={(s) => { setTplSpec(s); setCreative({ kind: "template", spec: s }); }} />
           )}
-          {creative.kind === "none" && (
+          {showLib && (
+            <div className="max-w-2xl">
+              {!libItems && <div className="flex items-center gap-2 text-ink-400 text-sm py-6"><Loader2 size={15} className="animate-spin" /> Loading your library…</div>}
+              {libItems && libItems.length === 0 && (
+                <p className="text-[13px] text-ink-500">Your library is empty. Upload a file here or design one in the <Link href="/studio" className="text-cy-300 hover:text-cy-200">Studio</Link>.</p>
+              )}
+              {libItems && libItems.length > 0 && (
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
+                  {libItems.map((lc) => {
+                    const url = libUrls[lc.id];
+                    const isVid = lc.storage_path.endsWith(".mp4");
+                    const isSel = creative.kind === "library" && creative.creative.id === lc.id;
+                    return (
+                      <button
+                        key={lc.id}
+                        type="button"
+                        onClick={() => setCreative({ kind: "library", creative: lc })}
+                        className={`text-left rounded-lg overflow-hidden border transition-colors ${
+                          isSel ? "border-cy-400/70 shadow-glow-cy" : "border-line-800 hover:border-line-700"
+                        }`}
+                      >
+                        <div className="relative aspect-[9/16] bg-bg-900 flex items-center justify-center">
+                          {url ? (
+                            isVid
+                              ? <video src={url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                              : /* eslint-disable-next-line @next/next/no-img-element */
+                                <img src={url} alt={lc.name ?? "Creative"} className="w-full h-full object-cover" />
+                          ) : <Loader2 size={12} className="animate-spin text-ink-600" />}
+                          {isSel && (
+                            <div className="absolute inset-0 bg-cy-400/15 flex items-center justify-center">
+                              <CheckCircle2 size={20} className="text-cy-200" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="px-1.5 py-1 text-[10px] text-ink-300 truncate bg-bg-950/60">{lc.name ?? "Untitled"}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+          {creative.kind === "none" && !showLib && (
             <p className="text-[13px] text-ink-500 max-w-md">No creative yet is fine. You can attach one from the campaign page any time before go-live.</p>
           )}
         </div>
@@ -426,7 +489,7 @@ export default function BookPage() {
             <Row label="Screens" value={`${selected.size} selected · ${fmtUsd(perDay)}/day`} />
             <Row label="Flight" value={`${startDate} → ${endDate} · ${days} day${days === 1 ? "" : "s"}`} />
             <Row label="Timing" value={daypartSummary(dayparts)} />
-            <Row label="Creative" value={creative.kind === "none" ? "Attach later" : creative.kind === "upload" ? creative.file.name : `Template · ${tplSpec.preset}`} />
+            <Row label="Creative" value={creative.kind === "none" ? "Attach later" : creative.kind === "upload" ? creative.file.name : creative.kind === "library" ? (creative.creative.name ?? "From library") : `Template · ${tplSpec.preset}`} />
             <Row label="Total" value={fmtUsd(total)} strong />
           </div>
           <p className="text-[12px] text-ink-500">
