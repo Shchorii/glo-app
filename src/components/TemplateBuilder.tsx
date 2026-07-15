@@ -291,7 +291,7 @@ export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: Template
   ctx.fillStyle = dark ? "#9ca3af" : "rgba(255,255,255,0.55)";
   ctx.font = `600 34px system-ui, -apple-system, 'Segoe UI', sans-serif`;
   ctx.textAlign = "center";
-  ctx.fillText("glo \u00b7 we-are-glo.com", CANVAS_W / 2, CANVAS_H - 60);
+  ctx.fillText("glo · we-are-glo.com", CANVAS_W / 2, CANVAS_H - 60);
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -441,7 +441,7 @@ export function TemplateBuilder({
           <input
             type="text" maxLength={90} value={spec.subline}
             onChange={(e) => onChange({ ...spec, subline: e.target.value })}
-            placeholder="Every Friday from 6pm \u00b7 142 Bedford Ave"
+            placeholder="Every Friday from 6pm · 142 Bedford Ave"
             className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none focus:ring-2 focus:ring-cy-400/20 placeholder-ink-500"
           />
         </div>
@@ -512,7 +512,7 @@ export function TemplateBuilder({
 
         {imgErr && <p className="text-sm text-red-400">{imgErr}</p>}
         <p className="text-[11px] text-ink-500">
-          Exports a 1080\u00d71920 portrait image. Glo auto-fits it to each screen at delivery.
+          Exports a 1080×1920 portrait image. Glo auto-fits it to each screen at delivery.
         </p>
       </div>
 
@@ -526,7 +526,7 @@ export function TemplateBuilder({
             aria-label="Template preview"
           />
         </div>
-        {!ready && <p className="text-[11px] text-ink-500 mt-2">Rendering\u2026</p>}
+        {!ready && <p className="text-[11px] text-ink-500 mt-2">Rendering…</p>}
       </div>
     </div>
   );
