@@ -149,9 +149,15 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
   return campaignId;
 }
 
-/** Cancel is an owner-side status update; RLS permits updates only while draft. */
-export async function cancelDraft(id: string): Promise<void> {
+/** Cancel any unpaid campaign (draft or reserved); RLS blocks it once paid. */
+export async function cancelCampaign(id: string): Promise<void> {
   const { error } = await sb().from("campaigns").update({ status: "cancelled" }).eq("id", id);
+  if (error) throw error;
+}
+
+/** Permanently delete a draft, unpaid reservation, or cancelled campaign. */
+export async function deleteCampaign(id: string): Promise<void> {
+  const { error } = await sb().from("campaigns").delete().eq("id", id);
   if (error) throw error;
 }
 
