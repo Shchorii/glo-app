@@ -31,6 +31,7 @@ export type Campaign = {
   total_usd: number;
   status: CampaignStatus;
   dayparts: string[];
+  reserved_at: string | null;
   created_at: string;
   screen_count?: number;
 };
