@@ -1,7 +1,8 @@
 import { dummyMetrics, dummyCampaign, dummyOffer, SURFACE_META, fmtCents, fmtInt, fmtPct } from "@/lib/dummy-data";
 import { getStats } from "@/lib/scans";
 import { LiveImpressionsCounter } from "@/components/LiveImpressionsCounter";
-import { TrendingUp, MousePointerClick, Eye, DollarSign, Monitor, Tv, QrCode, BadgePercent, Store } from "lucide-react";
+import { TrendingUp, MousePointerClick, Eye, DollarSign, Monitor, Tv, QrCode, BadgePercent, Store, type LucideIcon } from "lucide-react";
+import { PageContainer } from "@/components/PageContainer";
 
 
 
@@ -17,7 +18,7 @@ export default async function DashboardPage() {
   const doohShare = m.bySurface.dooh.impressions / surfaceImpsTotal;
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-10 space-y-6 md:space-y-8">
+    <PageContainer className="space-y-6 md:space-y-8">
       <div>
         <p className="chip mb-3">Dashboard · M3</p>
         <h1 className="text-2xl md:text-3xl font-semibold text-ink-50 tracking-tight">Performance</h1>
@@ -159,14 +160,14 @@ export default async function DashboardPage() {
           ))}
         </div>
       </section>
-    </div>
+    </PageContainer>
   );
 }
 
 function KpiTile({
   icon: Icon, label, value, sub, tone,
 }: {
-  icon: React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>;
+  icon: LucideIcon;
   label: string; value: string; sub: string; tone: "cy" | "lime";
 }) {
   const toneClass = tone === "cy"
@@ -187,7 +188,7 @@ function KpiTile({
 function SurfaceRow({
   icon: Icon, tone, label, imps, completions, spent, share, total: _total,
 }: {
-  icon: React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>;
+  icon: LucideIcon;
   tone: "cy" | "lime"; label: string; imps: number; completions: number; spent: number; share: number; total: number;
 }) {
   const bar = tone === "cy" ? "from-cy-500 to-cy-300" : "from-lime-500 to-lime-300";
@@ -214,7 +215,7 @@ function SurfaceRow({
 function FunnelStep({
   icon: Icon, tone, label, value, sub,
 }: {
-  icon: React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>;
+  icon: LucideIcon;
   tone: "cy" | "lime"; label: string; value: string; sub: string;
 }) {
   const toneClass = tone === "cy" ? "text-cy-300" : "text-lime-300";

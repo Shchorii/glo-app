@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import "leaflet/dist/leaflet.css";
+import { loadLeaflet, createDarkMap, fitToPoints, escapeHtml } from "@/lib/leaflet";
+import { LeafletBaseStyles } from "@/components/LeafletBaseStyles";
 
 export type MapScreen = {
   neighborhood: string;
@@ -23,26 +25,12 @@ export default function CampaignMap({ screens }: { screens: MapScreen[] }) {
     let cancelled = false;
 
     (async () => {
-      const L = (await import("leaflet")).default;
+      const L = await loadLeaflet();
       if (cancelled || !elRef.current || mapRef.current) return;
 
-      const map = L.map(elRef.current, {
-        zoomControl: true,
-        scrollWheelZoom: false, // don't hijack page scroll
-        dragging: !L.Browser.mobile, // mobile: two-finger pinch zoom only, page scroll stays free
-        attributionControl: true,
-      });
+      // mobile: two-finger pinch zoom only, page scroll stays free
+      const map = createDarkMap(L, elRef.current, { dragging: !L.Browser.mobile });
       mapRef.current = map;
-
-      L.tileLayer(
-        "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-        {
-          attribution:
-            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-          subdomains: "abcd",
-          maxZoom: 19,
-        }
-      ).addTo(map);
 
       const maxImp = Math.max(...screens.map((s) => s.impressions));
 
@@ -60,8 +48,8 @@ export default function CampaignMap({ screens }: { screens: MapScreen[] }) {
         });
 
         const infoHtml = `<div class="glo-tip">
-               <div class="glo-tip-corner">${s.corner}</div>
-               <div class="glo-tip-meta">${s.neighborhood} &middot; ${s.impressions.toLocaleString()} impressions</div>
+               <div class="glo-tip-corner">${escapeHtml(s.corner)}</div>
+               <div class="glo-tip-meta">${escapeHtml(s.neighborhood)} &middot; ${s.impressions.toLocaleString()} impressions</div>
              </div>`;
 
         const marker = L.marker([s.lat, s.lng], { icon }).addTo(map);
@@ -79,8 +67,7 @@ export default function CampaignMap({ screens }: { screens: MapScreen[] }) {
       });
 
       // Zoom in tight on the footprint
-      const bounds = L.latLngBounds(screens.map((s) => [s.lat, s.lng] as [number, number]));
-      map.fitBounds(bounds, { padding: [44, 44], maxZoom: 15 });
+      fitToPoints(L, map, screens.map((s) => [s.lat, s.lng]), { padding: [44, 44], maxZoom: 15 });
     })();
 
     return () => {
@@ -121,29 +108,14 @@ export default function CampaignMap({ screens }: { screens: MapScreen[] }) {
           70%  { transform: scale(1.25); opacity: 0.15; }
           100% { transform: scale(1.35); opacity: 0; }
         }
-        .leaflet-tooltip.leaflet-tooltip-top {
-          background: #0d1117; border: 1px solid rgba(163, 230, 53, 0.35);
-          border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.5); padding: 8px 10px;
-        }
-        .leaflet-tooltip-top:before { border-top-color: rgba(163, 230, 53, 0.35); }
         .glo-pop .leaflet-popup-content-wrapper {
           background: #0d1117; border: 1px solid rgba(163, 230, 53, 0.35);
           border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.5);
         }
         .glo-pop .leaflet-popup-content { margin: 8px 10px; }
         .glo-pop .leaflet-popup-tip { background: #0d1117; border: 1px solid rgba(163, 230, 53, 0.35); }
-        .glo-tip-corner { color: #f4f6f8; font-weight: 600; font-size: 13px; }
-        .glo-tip-meta { color: #94a3b8; font-size: 11px; margin-top: 2px; }
-        .leaflet-container { background: #0a0e13; font: inherit; }
-        .leaflet-control-zoom a {
-          background: #0d1117 !important; color: #cbd5e1 !important;
-          border-color: rgba(148, 163, 184, 0.2) !important;
-        }
-        .leaflet-control-attribution {
-          background: rgba(10, 14, 19, 0.75) !important; color: #64748b !important; font-size: 9px !important;
-        }
-        .leaflet-control-attribution a { color: #94a3b8 !important; }
       `}</style>
+      <LeafletBaseStyles />
     </div>
   );
 }

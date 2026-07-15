@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowLeft, Monitor, Tv } from "lucide-react";
+import { ArrowLeft, Monitor, Tv, type LucideIcon } from "lucide-react";
 import { dummyCampaign, dummyCreatives } from "@/lib/dummy-data";
 
 type Surface = "dooh" | "ctv";
@@ -59,7 +59,7 @@ export default function PreviewClient() {
 
 function TabButton({
   active, onClick, icon: Icon, label,
-}: { active: boolean; onClick: () => void; icon: React.ComponentType<{ size?: number }>; label: string }) {
+}: { active: boolean; onClick: () => void; icon: LucideIcon; label: string }) {
   return (
     <button
       type="button"

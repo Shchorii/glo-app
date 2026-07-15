@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { Upload, Link2, Sparkles, Wand2 } from "lucide-react";
+import { PageContainer } from "@/components/PageContainer";
+import type { LucideIcon } from "lucide-react";
 
 export default function StudioPage() {
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-10">
+    <PageContainer>
       <div className="flex items-baseline justify-between mb-8">
         <div>
           <p className="chip mb-3">Studio · M1</p>
@@ -27,13 +29,13 @@ export default function StudioPage() {
           <p className="text-ink-400 text-sm">No creatives yet. Pick a source above to get started.</p>
         </div>
       </div>
-    </div>
+    </PageContainer>
   );
 }
 
 function SourceCard({ href, icon: Icon, title, desc, accent, badge }: {
   href: string;
-  icon: React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>;
+  icon: LucideIcon;
   title: string; desc: string; accent: "cy" | "lime"; badge?: string;
 }) {
   const accentClasses = accent === "cy"

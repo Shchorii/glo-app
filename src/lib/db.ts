@@ -21,6 +21,18 @@ export type CampaignStatus =
   | "draft" | "pending_payment" | "pending_review" | "scheduled"
   | "live" | "completed" | "cancelled" | "refunded";
 
+/** Display label + badge classes for each campaign status. */
+export const CAMPAIGN_STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
+  draft:           { label: "Draft",     cls: "bg-bg-700/60 text-ink-200 border-line-700" },
+  pending_payment: { label: "Reserved",  cls: "bg-cy-400/15 text-cy-300 border-cy-400/30" },
+  pending_review:  { label: "In review", cls: "bg-amber-400/15 text-amber-300 border-amber-400/30" },
+  scheduled:       { label: "Scheduled", cls: "bg-cy-400/15 text-cy-300 border-cy-400/30" },
+  live:            { label: "Live",      cls: "bg-lime-400/15 text-lime-300 border-lime-400/30" },
+  completed:       { label: "Completed", cls: "bg-bg-700/60 text-ink-200 border-line-700" },
+  cancelled:       { label: "Cancelled", cls: "bg-bg-700/60 text-ink-500 border-line-800" },
+  refunded:        { label: "Refunded",  cls: "bg-bg-700/60 text-ink-500 border-line-800" },
+};
+
 export type Campaign = {
   id: string;
   user_id: string;
