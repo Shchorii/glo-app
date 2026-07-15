@@ -10,6 +10,7 @@ const CORS = {
 };
 
 const APP_BASE = "https://app.we-are-glo.com";
+const BRAND_ICON = "https://kewuinclruxhretzvggy.supabase.co/storage/v1/object/public/brand/glo-icon-512.png";
 let cachedStripeKey: string | null = null;
 
 async function getSecret(name: string): Promise<string | null> {
@@ -105,6 +106,7 @@ Deno.serve(async (req) => {
             product_data: {
               name: `Glo campaign: ${c.name}`,
               description: `${prices.length} screen${prices.length === 1 ? "" : "s"} x ${days} day${days === 1 ? "" : "s"} (${c.start_date} to ${c.end_date}), ${daypartLabel(c.dayparts as string[] | null)}`,
+              images: [BRAND_ICON],
             },
             unit_amount: Math.round(total * 100),
           },
