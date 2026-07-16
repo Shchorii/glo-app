@@ -1,229 +1,194 @@
-import { dummyMetrics, dummyCampaign, dummyOffer, SURFACE_META, fmtCents, fmtInt, fmtPct } from "@/lib/dummy-data";
-import { getStats } from "@/lib/scans";
-import { LiveImpressionsCounter } from "@/components/LiveImpressionsCounter";
-import { TrendingUp, MousePointerClick, Eye, DollarSign, Monitor, Tv, QrCode, BadgePercent, Store } from "lucide-react";
+"use client";
 
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useSession } from "@/lib/auth-client";
+import { getSupabase, isSupabaseConfigured } from "@/lib/supabase";
+import { listMyCampaigns, fmtUsd, type Campaign, type CampaignStatus } from "@/lib/db";
+import { Loader2, Monitor, Rocket, ShieldCheck, DollarSign, ArrowRight, Plus, Radio } from "lucide-react";
 
+const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
+  draft:           { label: "Draft",     cls: "bg-bg-700/60 text-ink-200 border-line-700" },
+  pending_payment: { label: "Reserved",  cls: "bg-cy-400/15 text-cy-300 border-cy-400/30" },
+  pending_review:  { label: "In review", cls: "bg-amber-400/15 text-amber-300 border-amber-400/30" },
+  scheduled:       { label: "Scheduled", cls: "bg-cy-400/15 text-cy-300 border-cy-400/30" },
+  live:            { label: "Live",      cls: "bg-lime-400/15 text-lime-300 border-lime-400/30" },
+  completed:       { label: "Completed", cls: "bg-bg-700/60 text-ink-200 border-line-700" },
+  cancelled:       { label: "Cancelled", cls: "bg-bg-700/60 text-ink-500 border-line-800" },
+  refunded:        { label: "Refunded",  cls: "bg-bg-700/60 text-ink-500 border-line-800" },
+};
 
-export default async function DashboardPage() {
-  const m = dummyMetrics;
-  const qr = await getStats(dummyOffer.code);
-  const redeemRate = qr.scans ? qr.redemptions / qr.scans : 0;
-  const completionRate = m.totals.completions / m.totals.impressions;
-  const ctr = m.totals.clicks / m.bySurface.ctv.impressions; // clicks only on CTV
-  const maxTimeline = Math.max(...m.timeline.map((d) => d.impressions));
-  const maxNeighborhood = Math.max(...m.byNeighborhood.map((n) => n.impressions));
-  const surfaceImpsTotal = m.bySurface.dooh.impressions + m.bySurface.ctv.impressions;
-  const doohShare = m.bySurface.dooh.impressions / surfaceImpsTotal;
+type JobRow = { campaign_id: string; state: string };
 
+export default function DashboardPage() {
+  const { user, loading } = useSession();
+  const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
+  const [jobs, setJobs] = useState<JobRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user) { setCampaigns(null); setJobs(null); return; }
+    listMyCampaigns().then(setCampaigns).catch((e) => setErr(String(e?.message ?? e)));
+    const sb = getSupabase();
+    if (sb) {
+      sb.from("delivery_jobs")
+        .select("campaign_id, state")
+        .then(({ data, error }) => {
+          if (!error) setJobs((data ?? []) as JobRow[]);
+        });
+    }
+  }, [user]);
+
+  if (!isSupabaseConfigured) {
+    return <Shell><p className="text-ink-400 text-sm">Supabase is not configured.</p></Shell>;
+  }
+  if (loading || (user && campaigns === null && !err)) {
+    return (
+      <Shell>
+        <div className="flex items-center gap-2 text-ink-400 text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading your campaigns
+        </div>
+      </Shell>
+    );
+  }
+  if (!user) {
+    return (
+      <Shell>
+        <p className="text-ink-400 text-sm">
+          <Link href="/sign-in" className="text-cy-300 hover:text-cy-200">Sign in</Link> to see your dashboard.
+        </p>
+      </Shell>
+    );
+  }
+  if (err) {
+    return <Shell><p className="text-red-400 text-sm">{err}</p></Shell>;
+  }
+
+  const all = campaigns ?? [];
+  const paidStatuses: CampaignStatus[] = ["pending_review", "scheduled", "live", "completed"];
+  const active = all.filter((c) => c.status === "live" || c.status === "scheduled");
+  const inReview = all.filter((c) => c.status === "pending_review");
+  const spent = all.filter((c) => paidStatuses.includes(c.status)).reduce((s, c) => s + c.total_usd, 0);
+  const screensBooked = all
+    .filter((c) => c.status === "live" || c.status === "scheduled")
+    .reduce((s, c) => s + (c.screen_count ?? 0), 0);
+
+  const jobList = jobs ?? [];
+  const jobsDone = jobList.filter((j) => j.state === "done").length;
+  const jobsRunning = jobList.filter((j) => j.state === "running").length;
+  const jobsQueued = jobList.length - jobsDone - jobsRunning;
+
+  const recent = all.slice(0, 6);
+
+  return (
+    <Shell>
+      {all.length === 0 ? (
+        <div className="card p-8 text-center space-y-4">
+          <p className="text-ink-100 font-medium">No campaigns yet.</p>
+          <p className="text-ink-400 text-sm">Pick screens on the map, set your dates, and go live on the street.</p>
+          <Link href="/book" className="btn btn-primary inline-flex items-center gap-1.5">
+            <Plus className="w-4 h-4" /> Book your first campaign
+          </Link>
+        </div>
+      ) : (
+        <>
+          {/* KPI tiles: real numbers only */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+            <KpiTile icon={Rocket}      label="Active"         value={String(active.length)}        sub={`${all.length} total`} tone="lime" />
+            <KpiTile icon={ShieldCheck} label="In review"      value={String(inReview.length)}      sub="Usually under 2 hours" tone="cy" />
+            <KpiTile icon={Monitor}     label="Screens booked" value={String(screensBooked)}        sub="Across active campaigns" tone="cy" />
+            <KpiTile icon={DollarSign}  label="Invested"       value={fmtUsd(spent)}                sub="Paid campaigns" tone="lime" />
+          </div>
+
+          {/* Delivery pipeline: real delivery_jobs states */}
+          {jobList.length > 0 && (
+            <section className="card p-5 md:p-6">
+              <h2 className="text-sm font-medium text-ink-100 mb-4 flex items-center gap-2">
+                <Radio className="w-4 h-4 text-cy-300" />
+                <span>Delivery pipeline</span>
+              </h2>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <PipeStat label="Queued"  value={jobsQueued}  cls="text-ink-200" />
+                <PipeStat label="Running" value={jobsRunning} cls="text-cy-300" />
+                <PipeStat label="Done"    value={jobsDone}    cls="text-lime-300" />
+              </div>
+              <p className="text-[11px] text-ink-500 mt-3">
+                One job per publisher network per campaign. Play-level metrics arrive as screens report.
+              </p>
+            </section>
+          )}
+
+          {/* Recent campaigns */}
+          <section className="card p-5 md:p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-medium text-ink-100">Recent campaigns</h2>
+              <Link href="/campaigns" className="text-[13px] text-cy-300 hover:text-cy-200 inline-flex items-center gap-1">
+                All campaigns <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+            <ul className="divide-y divide-line-800">
+              {recent.map((c) => {
+                const meta = STATUS_META[c.status];
+                return (
+                  <li key={c.id}>
+                    <Link href={`/campaigns/${c.id}`} className="flex items-center justify-between gap-3 py-3 group">
+                      <div className="min-w-0">
+                        <p className="text-sm text-ink-50 truncate group-hover:text-cy-200">{c.name}</p>
+                        <p className="text-[12px] text-ink-500 mt-0.5">
+                          {c.start_date} to {c.end_date} · {c.screen_count ?? 0} screen{(c.screen_count ?? 0) === 1 ? "" : "s"} · {fmtUsd(c.total_usd)}
+                        </p>
+                      </div>
+                      <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full border ${meta.cls}`}>{meta.label}</span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+
+          <div className="flex justify-center">
+            <Link href="/book" className="btn btn-primary inline-flex items-center gap-1.5">
+              <Plus className="w-4 h-4" /> Book another campaign
+            </Link>
+          </div>
+        </>
+      )}
+    </Shell>
+  );
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-10 space-y-6 md:space-y-8">
       <div>
-        <p className="chip mb-3">Dashboard · M3</p>
-        <h1 className="text-2xl md:text-3xl font-semibold text-ink-50 tracking-tight">Performance</h1>
-        <p className="text-ink-400 mt-1.5 text-sm flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span>Last 14 days · <span className="text-ink-200">{dummyCampaign.name}</span></span>
-          <a href={`/campaigns/${dummyCampaign.id}/preview`} className="inline-flex items-center gap-1 text-cy-300 hover:text-cy-200 text-[13px]">
-            See it on the streets →
-          </a>
-        </p>
+        <p className="chip mb-3">Dashboard</p>
+        <h1 className="text-2xl md:text-3xl font-semibold text-ink-50 tracking-tight">Your street presence</h1>
       </div>
-
-      {/* Live ticker */}
-      <LiveImpressionsCounter start={m.totals.impressions} ratePerMinute={9} />
-
-      {/* KPI tiles */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-        <KpiTile icon={Eye}                label="Impressions" value={fmtInt(m.totals.impressions)} sub="+8% vs week 1" tone="cy" />
-        <KpiTile icon={TrendingUp}         label="Completion"  value={fmtPct(completionRate, 1)}    sub={`${fmtInt(m.totals.completions)} VCRs`} tone="lime" />
-        <KpiTile icon={MousePointerClick}  label="CTR (CTV)"   value={fmtPct(ctr, 2)}               sub={`${m.totals.clicks} clicks`} tone="cy" />
-        <KpiTile icon={DollarSign}         label="Spent"       value={fmtCents(m.totals.spentCents)} sub={`${fmtCents(m.totals.ecpmCents)} eCPM`} tone="lime" />
-      </div>
-
-      {/* By surface + 8-day timeline */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-5">
-        {/* Surface split */}
-        <section className="card p-5 md:p-6">
-          <h2 className="text-sm font-medium text-ink-100 mb-4 flex items-center gap-2">
-            <span className="text-ink-400">By surface</span>
-          </h2>
-          <div className="space-y-4">
-            <SurfaceRow
-              icon={Monitor}
-              tone="cy"
-              label={SURFACE_META.dooh.label}
-              imps={m.bySurface.dooh.impressions}
-              completions={m.bySurface.dooh.completions}
-              spent={m.bySurface.dooh.spentCents}
-              share={doohShare}
-              total={surfaceImpsTotal}
-            />
-            <SurfaceRow
-              icon={Tv}
-              tone="lime"
-              label={SURFACE_META.ctv.label}
-              imps={m.bySurface.ctv.impressions}
-              completions={m.bySurface.ctv.completions}
-              spent={m.bySurface.ctv.spentCents}
-              share={1 - doohShare}
-              total={surfaceImpsTotal}
-            />
-          </div>
-        </section>
-
-        {/* 8-day timeline */}
-        <section className="card p-5 md:p-6">
-          <h2 className="text-sm font-medium text-ink-100 mb-4">
-            <span className="text-ink-400">Last 14 days · daily impressions</span>
-          </h2>
-          <div className="flex items-end justify-between gap-1 md:gap-1.5 h-32">
-            {m.timeline.map((d) => {
-              const h = (d.impressions / maxTimeline) * 100;
-              const isFri = d.label === "Fri";
-              return (
-                <div key={d.date} className="flex-1 flex flex-col items-center gap-1.5">
-                  <div className="text-[9px] text-ink-500 tabular-nums hidden sm:block">{(d.impressions / 1000).toFixed(1)}k</div>
-                  <div
-                    className={`w-full rounded-t ${isFri ? "bg-gradient-to-t from-lime-500 to-lime-300" : "bg-gradient-to-t from-cy-600 to-cy-400"}`}
-                    style={{ height: `${h}%`, minHeight: 8 }}
-                    title={`${d.date}: ${fmtInt(d.impressions)} impressions`}
-                  />
-                  <div className="text-[9px] sm:text-[10px] text-ink-400"><span className="sm:hidden">{d.label[0]}</span><span className="hidden sm:inline">{d.label}</span></div>
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-3 text-[11px] text-ink-500">Friday Special drove the peak. <span className="text-lime-300">+93% vs daily avg.</span></p>
-        </section>
-      </div>
-
-      {/* Neighborhoods */}
-      <section className="card p-5 md:p-6">
-        <h2 className="text-sm font-medium text-ink-100 mb-4">
-          <span className="text-ink-400">By neighborhood</span>
-        </h2>
-        <div className="space-y-3.5">
-          {m.byNeighborhood.map((n) => {
-            const share = n.impressions / m.totals.impressions;
-            return (
-              <div key={n.name}>
-                <div className="flex items-baseline justify-between mb-1">
-                  <span className="text-[14px] text-ink-100 font-medium">{n.name}</span>
-                  <span className="text-[12px] text-ink-400 tabular-nums">
-                    {fmtInt(n.impressions)} <span className="text-ink-500">· {fmtPct(n.completionRate, 0)} VCR · {fmtCents(n.spentCents)}</span>
-                  </span>
-                </div>
-                <div className="h-1.5 rounded-full bg-bg-900 overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-cy-500 to-cy-300" style={{ width: `${(n.impressions / maxNeighborhood) * 100}%` }} />
-                </div>
-                <div className="text-[10px] text-ink-500 mt-1">{fmtPct(share, 0)} of total</div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* QR coupon funnel */}
-      <section className="card p-5 md:p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-medium text-ink-100 flex items-center gap-2">
-            <QrCode size={15} className="text-cy-300" />
-            <span className="text-ink-400">DOOH coupon funnel</span>
-          </h2>
-          <a href={`/c/${dummyOffer.code}`} className="text-[12px] text-cy-300 hover:text-cy-200">Open coupon →</a>
-        </div>
-        <div className="grid grid-cols-3 gap-3 md:gap-4">
-          <FunnelStep icon={QrCode}        tone="cy"   label="Scans"        value={fmtInt(qr.scans)} sub={`${fmtPct(qr.scans / m.bySurface.dooh.impressions, 1)} of DOOH`} />
-          <FunnelStep icon={BadgePercent}  tone="lime" label="Redemptions"  value={fmtInt(qr.redemptions)} sub={`${dummyOffer.discountPct}% off claimed`} />
-          <FunnelStep icon={Store}         tone="cy"   label="Redeem rate"  value={fmtPct(redeemRate, 0)} sub="scan → counter" />
-        </div>
-        <p className="mt-3 text-[11px] text-ink-500">
-          The sidewalk QR gives DOOH a real conversion signal — <span className="text-ink-400">impression → scan → in-store redemption</span>, captured live.
-        </p>
-      </section>
-
-      {/* Top blocks */}
-      <section className="card p-5 md:p-6">
-        <h2 className="text-sm font-medium text-ink-100 mb-4">
-          <span className="text-ink-400">Top performing blocks · DOOH</span>
-        </h2>
-        <div className="divide-y divide-line-900">
-          {m.topBlocks.map((b, i) => (
-            <div key={i} className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
-              <div className="min-w-0">
-                <div className="text-[14px] text-ink-100 truncate">{b.corner}</div>
-                <div className="text-[11px] text-ink-500">{b.neighborhood} · {SURFACE_META[b.surface].label}</div>
-              </div>
-              <div className="text-[13px] tabular-nums text-ink-200 shrink-0 ml-3">{fmtInt(b.impressions)}</div>
-            </div>
-          ))}
-        </div>
-      </section>
+      {children}
     </div>
   );
 }
 
-function KpiTile({
-  icon: Icon, label, value, sub, tone,
-}: {
-  icon: React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>;
-  label: string; value: string; sub: string; tone: "cy" | "lime";
+function KpiTile({ icon: Icon, label, value, sub, tone }: {
+  icon: React.ComponentType<{ className?: string }>; label: string; value: string; sub: string; tone: "cy" | "lime";
 }) {
-  const toneClass = tone === "cy"
-    ? "bg-cy-400/10 text-cy-300 border-cy-400/30"
-    : "bg-lime-400/10 text-lime-300 border-lime-400/30";
   return (
     <div className="card p-4 md:p-5">
-      <div className={`w-8 h-8 mb-3 rounded-lg flex items-center justify-center border ${toneClass}`}>
-        <Icon size={15} strokeWidth={1.8} />
+      <div className="flex items-center gap-2 text-ink-400 text-[12px] mb-2">
+        <Icon className={`w-4 h-4 ${tone === "cy" ? "text-cy-300" : "text-lime-300"}`} />
+        {label}
       </div>
-      <div className="text-[10px] uppercase tracking-wider text-ink-400 mb-1">{label}</div>
-      <div className="text-xl md:text-2xl font-semibold text-ink-50 tabular-nums leading-tight">{value}</div>
-      <div className="text-[11px] text-ink-500 mt-1.5">{sub}</div>
+      <p className="text-xl md:text-2xl font-semibold text-ink-50">{value}</p>
+      <p className="text-[11px] text-ink-500 mt-1">{sub}</p>
     </div>
   );
 }
 
-function SurfaceRow({
-  icon: Icon, tone, label, imps, completions, spent, share, total: _total,
-}: {
-  icon: React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>;
-  tone: "cy" | "lime"; label: string; imps: number; completions: number; spent: number; share: number; total: number;
-}) {
-  const bar = tone === "cy" ? "from-cy-500 to-cy-300" : "from-lime-500 to-lime-300";
+function PipeStat({ label, value, cls }: { label: string; value: number; cls: string }) {
   return (
-    <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <div className="flex items-center gap-2">
-          <Icon size={14} className={tone === "cy" ? "text-cy-300" : "text-lime-300"} strokeWidth={1.8} />
-          <span className="text-[14px] text-ink-100 font-medium">{label}</span>
-        </div>
-        <span className="text-[12px] text-ink-400 tabular-nums">{fmtPct(share, 0)}</span>
-      </div>
-      <div className="h-2 rounded-full bg-bg-900 overflow-hidden">
-        <div className={`h-full bg-gradient-to-r ${bar}`} style={{ width: `${share * 100}%` }} />
-      </div>
-      <div className="flex justify-between mt-2 text-[11px] text-ink-500 tabular-nums">
-        <span>{fmtInt(imps)} imps · {fmtPct(completions / imps, 0)} VCR</span>
-        <span>{fmtCents(spent)}</span>
-      </div>
-    </div>
-  );
-}
-
-function FunnelStep({
-  icon: Icon, tone, label, value, sub,
-}: {
-  icon: React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>;
-  tone: "cy" | "lime"; label: string; value: string; sub: string;
-}) {
-  const toneClass = tone === "cy" ? "text-cy-300" : "text-lime-300";
-  return (
-    <div className="card-tight px-3 py-3 text-center">
-      <Icon size={16} className={`mx-auto mb-1.5 ${toneClass}`} strokeWidth={1.8} />
-      <div className="text-lg md:text-xl font-semibold text-ink-50 tabular-nums leading-tight">{value}</div>
-      <div className="text-[10px] uppercase tracking-wider text-ink-400 mt-0.5">{label}</div>
-      <div className="text-[10px] text-ink-500 mt-0.5">{sub}</div>
+    <div className="rounded-lg border border-line-800 bg-bg-900 py-3">
+      <p className={`text-lg font-semibold ${cls}`}>{value}</p>
+      <p className="text-[11px] text-ink-500">{label}</p>
     </div>
   );
 }
