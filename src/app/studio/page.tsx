@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { uploadCreative, listMyCreatives, signedCreativeUrl, type Creative } from "@/lib/db";
 import { useSession } from "@/lib/auth-client";
 import { isSupabaseConfigured } from "@/lib/supabase";
-import { Upload, Link2, Sparkles, Wand2, Loader2, CheckCircle2, ArrowRight } from "lucide-react";
+import { Upload, Link2, Sparkles, Wand2, Loader2, CheckCircle2, ArrowRight, AlertTriangle } from "lucide-react";
 
 const MAX_UPLOAD_MB = 50;
 
@@ -37,11 +37,26 @@ async function probeFile(file: File): Promise<{ width?: number; height?: number;
   }
 }
 
+function specWarnings(meta: { width?: number; height?: number; duration?: number }): string[] {
+  const w: string[] = [];
+  if (meta.width && meta.height && meta.width > meta.height) {
+    w.push("This file is landscape. Glo screens are portrait (9:16); it will play with heavy cropping or bars. A 1080\u00d71920 version will look much better.");
+  }
+  if (meta.width && meta.width < 720) {
+    w.push(`Resolution is on the low side (${meta.width}px wide). Street screens are sharp; aim for at least 1080px wide.`);
+  }
+  if (meta.duration && meta.duration > 30) {
+    w.push(`This video runs ${meta.duration}s. Most Glo slots play 15\u201330s loops; longer files may be trimmed by the venue player.`);
+  }
+  return w;
+}
+
 export default function StudioPage() {
   const router = useRouter();
   const { user, loading } = useSession();
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [uploaded, setUploaded] = useState<Creative | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [recent, setRecent] = useState<Creative[] | null>(null);
@@ -63,9 +78,10 @@ export default function StudioPage() {
   async function onFile(f: File | undefined) {
     if (!f) return;
     if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { setErr(`File is too big. Keep it under ${MAX_UPLOAD_MB}MB.`); return; }
-    setErr(null); setUploading(true); setUploaded(null);
+    setErr(null); setUploading(true); setUploaded(null); setWarnings([]);
     try {
       const meta = await probeFile(f);
+      setWarnings(specWarnings(meta));
       const ext = (f.name.split(".").pop() || "bin").toLowerCase();
       const name = f.name.replace(/\.[^.]+$/, "");
       const c = await uploadCreative(f, { source: "upload", ext, name, ...meta });
@@ -97,7 +113,7 @@ export default function StudioPage() {
           <SourceCard
             icon={uploading ? Loader2 : Upload}
             iconSpin={uploading}
-            title={uploading ? "Uploading…" : "Upload a file"}
+            title={uploading ? "Uploading\u2026" : "Upload a file"}
             desc="MP4, PNG, or JPG. Up to 50MB. Lands in your library, ready to book."
             accent="cy"
           />
@@ -126,6 +142,15 @@ export default function StudioPage() {
             <Link href="/library" className="btn btn-ghost">View library</Link>
             <Link href="/book" className="btn btn-lime">Book it <ArrowRight size={14} /></Link>
           </div>
+        </div>
+      )}
+      {uploaded && warnings.length > 0 && (
+        <div className="mt-2.5 rounded-lg border border-amber-400/30 bg-amber-400/5 px-4 py-3 space-y-1.5">
+          {warnings.map((w, i) => (
+            <p key={i} className="text-[12px] text-amber-200 flex items-start gap-2">
+              <AlertTriangle size={13} className="shrink-0 mt-0.5" /> <span>{w}</span>
+            </p>
+          ))}
         </div>
       )}
 
