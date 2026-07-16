@@ -18,6 +18,7 @@ export type MapScreen = {
 export default function CampaignMap({ screens }: { screens: MapScreen[] }) {
   const elRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("leaflet").Map | null>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +34,12 @@ export default function CampaignMap({ screens }: { screens: MapScreen[] }) {
         attributionControl: true,
       });
       mapRef.current = map;
+
+      if (typeof ResizeObserver !== "undefined" && elRef.current) {
+        const ro = new ResizeObserver(() => map.invalidateSize());
+        ro.observe(elRef.current);
+        roRef.current = ro;
+      }
 
       L.tileLayer(
         "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
@@ -85,6 +92,8 @@ export default function CampaignMap({ screens }: { screens: MapScreen[] }) {
 
     return () => {
       cancelled = true;
+      roRef.current?.disconnect();
+      roRef.current = null;
       mapRef.current?.remove();
       mapRef.current = null;
     };

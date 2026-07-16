@@ -31,6 +31,7 @@ export default function BookMap({
   const elRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("leaflet").Map | null>(null);
   const markersRef = useRef<Map<string, import("leaflet").Marker>>(new Map());
+  const roRef = useRef<ResizeObserver | null>(null);
   const onToggleRef = useRef(onToggle);
   onToggleRef.current = onToggle;
   const selectedRef = useRef(selected);
@@ -202,9 +203,19 @@ export default function BookMap({
       map.on("dblclick", () => {
         if (draw.current.mode === "poly") finishPolygon();
       });
+
+      // Keep tiles and hit-targets correct when the container resizes
+      // (rotation, keyboard, list/map toggle, window resize).
+      if (typeof ResizeObserver !== "undefined" && elRef.current) {
+        const ro = new ResizeObserver(() => map.invalidateSize());
+        ro.observe(elRef.current);
+        roRef.current = ro;
+      }
     })();
     return () => {
       cancelled = true;
+      roRef.current?.disconnect();
+      roRef.current = null;
       mapRef.current?.remove();
       mapRef.current = null;
       markersRef.current.clear();
