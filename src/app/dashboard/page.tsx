@@ -131,7 +131,7 @@ export default function DashboardPage() {
                 const meta = STATUS_META[c.status];
                 return (
                   <li key={c.id}>
-                    <Link href={`/campaigns/${c.id}`} className="flex items-center justify-between gap-3 py-3 group">
+                    <Link href={`/campaigns/view?id=${c.id}`} className="flex items-center justify-between gap-3 py-3 group">
                       <div className="min-w-0">
                         <p className="text-sm text-ink-50 truncate group-hover:text-cy-200">{c.name}</p>
                         <p className="text-[12px] text-ink-500 mt-0.5">
