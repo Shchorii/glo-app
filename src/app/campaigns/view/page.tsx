@@ -7,9 +7,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   getCampaign, cancelCampaign, deleteCampaign, signedCreativeUrl, startCheckout, daysBetween, fmtUsd,
-  type CampaignDetail, type CampaignStatus,
+  listMyCreatives, type Creative, type CampaignDetail, type CampaignStatus,
 } from "@/lib/db";
-import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock, Trash2, Timer } from "lucide-react";
+import { getSupabase } from "@/lib/supabase";
+import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock, Trash2, Timer, RefreshCw } from "lucide-react";
 import { daypartSummary } from "@/lib/dayparts";
 
 const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
@@ -34,6 +35,10 @@ function CampaignView() {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [showReplace, setShowReplace] = useState(false);
+  const [alts, setAlts] = useState<Creative[] | null>(null);
+  const [altThumbs, setAltThumbs] = useState<Record<string, string>>({});
+  const [swapping, setSwapping] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) { setC(null); return; }
@@ -131,6 +136,47 @@ function CampaignView() {
     }
   }
 
+  async function openReplace() {
+    if (!c || c === "loading") return;
+    const current = c;
+    setShowReplace(true);
+    if (alts) return;
+    try {
+      const mine = await listMyCreatives();
+      const options = mine.filter((cr) => cr.id !== current.creative?.id && cr.review_status !== "rejected");
+      setAlts(options);
+      options.slice(0, 12).forEach(async (cr) => {
+        const u = await signedCreativeUrl(cr.storage_path);
+        if (u) setAltThumbs((prev) => ({ ...prev, [cr.id]: u }));
+      });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function swapCreative(creativeId: string) {
+    if (!c || c === "loading") return;
+    setSwapping(creativeId); setErr(null);
+    try {
+      const sb = getSupabase();
+      if (!sb) throw new Error("Not configured");
+      const { error } = await sb.from("campaigns").update({ creative_id: creativeId }).eq("id", c.id);
+      if (error) throw error;
+      const fresh = await getCampaign(c.id);
+      if (fresh) {
+        setC(fresh);
+        if (fresh.creative?.storage_path) signedCreativeUrl(fresh.creative.storage_path).then(setImgUrl);
+      }
+      setShowReplace(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSwapping(null);
+    }
+  }
+
+  const rejected = c.creative?.review_status === "rejected";
+
   return (
     <div>
       <Link href="/campaigns" className="inline-flex items-center gap-1.5 text-sm text-ink-300 hover:text-ink-50 mb-5">
@@ -181,9 +227,57 @@ function CampaignView() {
             <Timer size={15} className="shrink-0" /> Reservation expired. The slot was released; book again to grab it back.
           </div>
         )}
-        {c.status === "pending_review" && (
+        {c.status === "pending_review" && !rejected && (
           <div className="rounded-lg border border-amber-400/30 bg-amber-400/5 px-4 py-3 text-[13px] text-amber-200 mb-5">
             Paid and in review. We check every creative before it hits the street; you will get the go-live signal soon.
+          </div>
+        )}
+        {rejected && (
+          <div className="rounded-lg border border-red-400/30 bg-red-400/5 px-4 py-3 mb-5">
+            <p className="text-[13px] text-red-200">
+              Your creative was not approved{c.creative?.rejection_reason ? `: ${c.creative.rejection_reason}` : "."}
+              {" "}Swap it and your campaign goes straight back into review; your screens and dates stay booked.
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              <button type="button" onClick={openReplace} className="btn btn-lime text-[13px]">
+                <RefreshCw size={14} /> Replace creative
+              </button>
+              <Link href="/studio" className="btn btn-ghost text-[13px]">Make a new one in Studio</Link>
+            </div>
+            {showReplace && (
+              <div className="mt-3">
+                {alts === null ? (
+                  <p className="text-[12px] text-ink-500 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Loading your library</p>
+                ) : alts.length === 0 ? (
+                  <p className="text-[12px] text-ink-500">No other creatives in your library yet; make one in Studio and come back.</p>
+                ) : (
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                    {alts.slice(0, 12).map((cr) => (
+                      <button
+                        key={cr.id}
+                        type="button"
+                        disabled={swapping !== null}
+                        onClick={() => swapCreative(cr.id)}
+                        className="relative aspect-[9/16] rounded-md overflow-hidden border border-line-800 hover:border-cy-400/60 bg-bg-900 disabled:opacity-50"
+                        title={cr.name ?? cr.source}
+                      >
+                        {altThumbs[cr.id] ? (
+                          cr.storage_path.endsWith(".mp4")
+                            ? <video src={altThumbs[cr.id]} className="w-full h-full object-cover" muted playsInline />
+                            : /* eslint-disable-next-line @next/next/no-img-element */
+                              <img src={altThumbs[cr.id]} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="absolute inset-0 flex items-center justify-center"><ImageIcon size={14} className="text-ink-600" /></span>
+                        )}
+                        {swapping === cr.id && (
+                          <span className="absolute inset-0 bg-bg-950/70 flex items-center justify-center"><Loader2 size={14} className="animate-spin text-cy-300" /></span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
