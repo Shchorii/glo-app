@@ -720,7 +720,7 @@ export function TemplateBuilder({
       <div className="space-y-5">
         <div>
           <label className="block text-xs uppercase tracking-wider text-ink-400 mb-2">Template</label>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
             {TEMPLATES.map((t) => (
               <TemplateThumb key={t.id} tpl={t} active={spec.preset === t.id} accent={spec.accent} onClick={() => pickTemplate(t)} />
             ))}
@@ -853,12 +853,12 @@ export function TemplateBuilder({
         </p>
       </div>
 
-      <div>
+      <div className="order-first lg:order-none">
         <div className="text-xs uppercase tracking-wider text-ink-400 mb-1.5">Live preview</div>
         <div className="rounded-lg border border-line-800 bg-bg-900 p-3 flex justify-center lg:sticky lg:top-4">
           <canvas
             ref={previewRef}
-            className="w-full max-w-[240px] h-auto rounded-md"
+            className="w-full max-w-[170px] sm:max-w-[240px] h-auto rounded-md"
             style={{ aspectRatio: "9/16" }}
             aria-label="Template preview"
           />
