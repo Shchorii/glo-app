@@ -716,7 +716,7 @@ export function TemplateBuilder({
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-6">
+    <div className="grid grid-cols-1 md:grid-cols-[1fr_200px] lg:grid-cols-[1fr_260px] gap-6">
       <div className="space-y-5">
         <div>
           <label className="block text-xs uppercase tracking-wider text-ink-400 mb-2">Template</label>
@@ -853,9 +853,9 @@ export function TemplateBuilder({
         </p>
       </div>
 
-      <div className="order-first lg:order-none">
+      <div className="order-first md:order-none">
         <div className="text-xs uppercase tracking-wider text-ink-400 mb-1.5">Live preview</div>
-        <div className="rounded-lg border border-line-800 bg-bg-900 p-3 flex justify-center lg:sticky lg:top-4">
+        <div className="rounded-lg border border-line-800 bg-bg-900 p-3 flex justify-center md:sticky md:top-4">
           <canvas
             ref={previewRef}
             className="w-full max-w-[170px] sm:max-w-[240px] h-auto rounded-md"
