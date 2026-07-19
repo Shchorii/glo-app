@@ -47,16 +47,20 @@ const SWATCHES = [
   { name: "White", hex: "#FFFFFF" },
 ];
 
-const IMG_TEMPLATES = ["Neon", "Midnight", "Mesh", "Charge", "Poster", "Bold"];
+const IMG_TEMPLATES = ["Neon", "Midnight", "Mesh", "Sunset", "Charge", "Poster", "Ember", "Ocean", "Bold"];
 const VID_TEMPLATES = ["Video + Neon", "Video + Minimal", "Video + Bold", "Text Overlay"];
 
-/* Backgrounds built strictly from the Glo ramp + cyan/lime low-alpha charges. */
+/* Creative template backgrounds. UI chrome stays on Glo tokens; templates are
+   ad-content and may use richer hues (per design-kit v1). */
 const TPL_BG: Record<string, string> = {
-  Neon: "radial-gradient(circle at 50% 30%, rgba(34,211,238,0.22), #04070D 70%)",
-  Midnight: "linear-gradient(180deg, #0F1726, #04070D)",
-  Mesh: "radial-gradient(circle at 20% 20%, rgba(34,211,238,0.18), transparent 55%), radial-gradient(circle at 80% 70%, rgba(190,242,100,0.12), #04070D)",
+  Neon: "radial-gradient(circle at 50% 30%, #1b2a4a, #04070D 70%)",
+  Midnight: "linear-gradient(180deg, #0b1430, #05060f)",
+  Mesh: "radial-gradient(circle at 20% 20%, #2a1b4a, transparent 55%), radial-gradient(circle at 80% 70%, #0e3a44, #04070D)",
+  Sunset: "linear-gradient(200deg, #f97316, #b91c6b 60%, #1a0b1e)",
   Charge: "radial-gradient(circle at 50% 85%, rgba(190,242,100,0.25), #04070D 65%)",
   Poster: "linear-gradient(180deg, #141D30, #04070D)",
+  Ember: "radial-gradient(circle at 50% 80%, #7c2d12, #1a0b0b 70%)",
+  Ocean: "linear-gradient(190deg, #0e7490, #0f1726 60%, #04070D)",
   Bold: "#04070D",
 };
 
