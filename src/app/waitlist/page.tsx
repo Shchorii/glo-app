@@ -1,4 +1,5 @@
 "use client";
+import { WAITLIST_ENDPOINT } from "@/lib/endpoints";
 import { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -51,7 +52,7 @@ function WaitlistForm() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/waitlist", {
+      const res = await fetch(WAITLIST_ENDPOINT ?? "/api/waitlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
