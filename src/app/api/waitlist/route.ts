@@ -66,14 +66,12 @@ export async function POST(req: NextRequest) {
     phone,
     advertiser_type,
     business_size,
-    use_case,
     campaign_id,
   } = body as {
     email?: string;
     phone?: string;
     advertiser_type?: string;
     business_size?: string;
-    use_case?: string;
     campaign_id?: string;
   };
 
@@ -108,7 +106,7 @@ export async function POST(req: NextRequest) {
     Phone: phone ?? "",
     "Advertiser Type": advertiser_type ?? "",
     "Business Size": business_size ?? "",
-    "Use Case": use_case ?? "",
+    "Use Case": "",
     City: geo.city,
     "State/Province": geo.region,
     Country: geo.country,
