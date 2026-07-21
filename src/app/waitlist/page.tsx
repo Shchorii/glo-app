@@ -45,7 +45,7 @@ function WaitlistForm() {
           email,
           phone: phone || undefined,
           advertiser_type: advertiserType,
-          business_size: businessSize
+          business_size: businessSize,
           campaign_id: campaignId,
         }),
       });
