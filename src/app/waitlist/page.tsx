@@ -6,23 +6,10 @@ import { useSearchParams } from "next/navigation";
 import { GloMark } from "@/components/Logo";
 import { Loader2, CheckCircle2 } from "lucide-react";
 
-const ADVERTISER_TYPES = [
-  "Micro-business",
-  "Solopreneur",
-  "Agency",
-  "Individual",
-  "Other",
-] as const;
+const ADVERTISER_TYPES = ["Individual", "Business"] as const;
 
 const BUSINESS_SIZES = ["Solo", "1-10", "11-50", "50+"] as const;
 
-const USE_CASES = [
-  "Brand Awareness",
-  "Foot Traffic",
-  "Product Launch",
-  "Vanity",
-  "Other",
-] as const;
 
 const selectCls =
   "w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-lime-400 focus:outline-none focus:ring-2 focus:ring-lime-400/20 appearance-none";
@@ -36,7 +23,6 @@ function WaitlistForm() {
   const [phone, setPhone] = useState("");
   const [advertiserType, setAdvertiserType] = useState("");
   const [businessSize, setBusinessSize] = useState("");
-  const [useCase, setUseCase] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -59,8 +45,7 @@ function WaitlistForm() {
           email,
           phone: phone || undefined,
           advertiser_type: advertiserType,
-          business_size: businessSize,
-          use_case: useCase,
+          business_size: businessSize
           campaign_id: campaignId,
         }),
       });
@@ -166,23 +151,6 @@ function WaitlistForm() {
             </select>
           </div>
           <div>
-            <label className={labelCls}>Primary use case *</label>
-            <select
-              required
-              value={useCase}
-              onChange={(e) => setUseCase(e.target.value)}
-              className={selectCls}
-            >
-              <option value="" disabled>
-                Select use case
-              </option>
-              {USE_CASES.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-          </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
           <button
             type="submit"
