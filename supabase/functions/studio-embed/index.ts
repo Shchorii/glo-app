@@ -73,7 +73,14 @@ class EmbedIngest {
   }
 
   static async download(url: string): Promise<{ bytes: Uint8Array; contentType: string; ext: string }> {
-    const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(25000) });
+    const res = await fetch(url, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(25000),
+      headers: {
+        "User-Agent": "GloStudio/1.0 (https://app.we-are-glo.com)",
+        Accept: "image/*,video/*,*/*",
+      },
+    });
     if (!res.ok) throw new Error(`Could not fetch media (${res.status}).`);
     const len = Number(res.headers.get("content-length") ?? "0");
     if (len > MAX_BYTES) throw new Error("File is too big. Keep it under 50MB.");
