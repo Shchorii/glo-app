@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { listMyCreatives, deleteCreative, signedCreativeUrl, type Creative } from "@/lib/db";
 import { useSession } from "@/lib/auth-client";
 import { isSupabaseConfigured } from "@/lib/supabase";
-import { Sparkles, Upload, Loader2, Trash2, Wand2 } from "lucide-react";
+import { StudioMedia } from "@/lib/studio";
+import { Sparkles, Upload, Loader2, Trash2, Wand2, Link2 } from "lucide-react";
 
 const STATUS_CHIP: Record<Creative["review_status"], { label: string; cls: string }> = {
   pending:  { label: "Pending review", cls: "bg-bg-950/70 text-ink-200" },
@@ -66,7 +67,8 @@ export default function LibraryPage() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
         {items?.map((c) => {
           const url = urls[c.id];
-          const isVideo = c.storage_path.endsWith(".mp4");
+          const isVideo = StudioMedia.isVideoPath(c.storage_path);
+          const origin = StudioMedia.sourceChip(c.source);
           const chip = STATUS_CHIP[c.review_status];
           const busy = busyId === c.id;
           return (
@@ -81,7 +83,11 @@ export default function LibraryPage() {
                   <Loader2 size={14} className="animate-spin text-ink-600" />
                 )}
                 <div className="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider bg-bg-950/70 backdrop-blur text-ink-200">
-                  {c.source === "template" ? <><Sparkles size={9} className="text-lime-300" /><span>Template</span></> : <><Upload size={9} /><span>Upload</span></>}
+                  {origin.icon === "template" && <Sparkles size={9} className="text-lime-300" />}
+                  {origin.icon === "ai" && <Sparkles size={9} className="text-cy-300" />}
+                  {origin.icon === "embed" && <Link2 size={9} />}
+                  {origin.icon === "upload" && <Upload size={9} />}
+                  <span>{origin.label}</span>
                 </div>
                 <div className={`absolute top-2 right-2 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider backdrop-blur ${chip.cls}`}>
                   {chip.label}
@@ -100,15 +106,24 @@ export default function LibraryPage() {
                   </div>
                   {c.rejection_reason && <div className="text-[11px] text-red-400 mt-1 line-clamp-2">{c.rejection_reason}</div>}
                 </div>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => onDelete(c)}
-                  className="shrink-0 p-1.5 rounded text-ink-500 hover:text-red-300 hover:bg-bg-800 disabled:opacity-40"
-                  aria-label="Delete creative"
-                >
-                  {busy ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                </button>
+                <div className="shrink-0 flex items-center">
+                  <Link
+                    href={`/studio/generate?from=${c.id}`}
+                    className="p-1.5 rounded text-ink-500 hover:text-cy-300 hover:bg-bg-800"
+                    aria-label="Remix with AI"
+                  >
+                    <Sparkles size={14} />
+                  </Link>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onDelete(c)}
+                    className="p-1.5 rounded text-ink-500 hover:text-red-300 hover:bg-bg-800 disabled:opacity-40"
+                    aria-label="Delete creative"
+                  >
+                    {busy ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  </button>
+                </div>
               </div>
             </div>
           );
@@ -118,7 +133,7 @@ export default function LibraryPage() {
   );
 }
 
-function Shell({ children, count }: { children: React.ReactNode; count: number }) {
+function Shell({ children, count }: { children: ReactNode; count: number }) {
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-10">
       <div className="flex flex-wrap items-baseline justify-between gap-3 mb-6 md:mb-8">

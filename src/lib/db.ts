@@ -41,18 +41,23 @@ export type CampaignDetail = Campaign & {
   creative: Creative | null;
 };
 
+export type CreativeSource = "upload" | "template" | "ai" | "embed";
+
 export type Creative = {
   id: string;
   user_id: string;
   name: string | null;
   storage_path: string;
-  source: "upload" | "template";
+  source: CreativeSource;
   width_px: number | null;
   height_px: number | null;
   duration_s: number | null;
   review_status: "pending" | "approved" | "rejected";
   rejection_reason: string | null;
   created_at: string;
+  source_url?: string | null;
+  provider?: string | null;
+  model?: string | null;
 };
 
 function sb() {
@@ -166,7 +171,17 @@ export async function deleteCampaign(id: string): Promise<void> {
 
 export async function uploadCreative(
   blob: Blob,
-  opts: { source: "upload" | "template"; ext: string; name?: string; width?: number; height?: number; duration?: number }
+  opts: {
+    source: CreativeSource;
+    ext: string;
+    name?: string;
+    width?: number;
+    height?: number;
+    duration?: number;
+    source_url?: string;
+    provider?: string;
+    model?: string;
+  }
 ): Promise<Creative> {
   const client = sb();
   const { data: auth } = await client.auth.getUser();
@@ -190,6 +205,9 @@ export async function uploadCreative(
       width_px: opts.width ?? null,
       height_px: opts.height ?? null,
       duration_s: opts.duration ?? null,
+      source_url: opts.source_url ?? null,
+      provider: opts.provider ?? null,
+      model: opts.model ?? null,
     })
     .select("*")
     .single();

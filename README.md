@@ -6,7 +6,7 @@ Glo Campaign Manager — agentic AI creative studio + neighborhood ad campaign b
 
 ## Modules
 
-- **M1 — Creative Studio** *(in progress)* — Upload/embed videos, AI-remix via fal.ai (Seedance, Kling, Veo, Nano Banana) + Higgsfield MCP
+- **M1 — Creative Studio** *(in progress)* — Upload/embed videos, AI-remix via fal.ai (Seedance, Kling, Veo, Nano Banana). Higgsfield MCP is an agent connector, not a second Studio form.
 - **M2 — Campaign Builder** *(next)* — Block-level neighborhood targeting, multi-surface delivery, scheduling, bidding
 - **M3 — Dashboard** *(next)* — Cross-surface engagement, geo-heatmap by block
 
