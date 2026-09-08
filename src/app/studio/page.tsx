@@ -84,13 +84,13 @@ export default function StudioPage() {
           <SourceCard icon={Wand2} title="Design with a template" desc="Glow, Bold, or Minimal. Type a headline, pick a color, done." accent="lime" />
         </Link>
         <Link href="/studio/generate" className="group">
-          <SourceCard icon={Sparkles} title="Generate with AI" desc="Seedance, Kling, Veo, or Nano Banana. Text to street-ready video, or remix a still." accent="lime" />
+          <SourceCard icon={Sparkles} title="Generate with AI" desc="Text to street-ready video." accent="lime" />
         </Link>
       </div>
 
       <div className="mt-4">
         <Link href="/studio/ingest/embed" className="inline-flex items-center gap-2 text-[12px] text-ink-400 hover:text-cy-300">
-          <Link2 size={12} /> Paste a TikTok / YouTube URL
+          <Link2 size={12} /> Paste a TikTok / IG URL
         </Link>
       </div>
 

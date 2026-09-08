@@ -21,11 +21,11 @@ export default function StudioEmbedPage() {
   const [saved, setSaved] = useState<Creative | null>(null);
 
   if (!isSupabaseConfigured) {
-    return <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle="Paste a public TikTok, YouTube, or direct MP4."><p className="text-ink-400 text-sm">Studio is not configured in this build.</p></StudioChrome>;
+    return <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle="Paste a public TikTok, Instagram, YouTube, or direct MP4."><p className="text-ink-400 text-sm">Studio is not configured in this build.</p></StudioChrome>;
   }
   if (!loading && !user) {
     router.replace("/sign-in?next=/studio/ingest/embed");
-    return <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle="Paste a public TikTok, YouTube, or direct MP4."><Loader2 size={15} className="animate-spin text-ink-400" /></StudioChrome>;
+    return <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle="Paste a public TikTok, Instagram, YouTube, or direct MP4."><Loader2 size={15} className="animate-spin text-ink-400" /></StudioChrome>;
   }
 
   async function onSubmit(e: FormEvent) {
@@ -43,7 +43,7 @@ export default function StudioEmbedPage() {
   }
 
   return (
-    <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle="TikTok and YouTube save a public preview you can remix. Direct MP4 or image links are stored as-is.">
+    <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle="TikTok and YouTube save a public preview. Instagram needs a Meta token we do not have yet — paste a direct MP4 instead.">
       {saved ? (
         <div className="card p-8 text-center max-w-lg mx-auto">
           <CheckCircle2 size={40} className="mx-auto text-lime-300 mb-4" />
