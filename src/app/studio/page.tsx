@@ -1,18 +1,23 @@
 "use client";
 
 import type { ComponentType, ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { listMyCreatives, signedCreativeUrl, type Creative } from "@/lib/db";
+import { uploadCreative, listMyCreatives, signedCreativeUrl, type Creative } from "@/lib/db";
 import { useSession } from "@/lib/auth-client";
 import { isSupabaseConfigured } from "@/lib/supabase";
-import { StudioMedia } from "@/lib/studio";
-import { Upload, Link2, Sparkles, Wand2, Loader2 } from "lucide-react";
+import { FileProbe, MAX_UPLOAD_MB, StudioMedia } from "@/lib/studio";
+import { Upload, Link2, Sparkles, Wand2, Loader2, CheckCircle2, ArrowRight, AlertTriangle } from "lucide-react";
 
 export default function StudioPage() {
   const router = useRouter();
   const { user, loading } = useSession();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [uploaded, setUploaded] = useState<Creative | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const [recent, setRecent] = useState<Creative[] | null>(null);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
 
@@ -29,26 +34,88 @@ export default function StudioPage() {
       .catch(() => setRecent([]));
   }, [user, loading, router]);
 
+  async function onFile(f: File | undefined) {
+    if (!f) return;
+    if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { setErr(`File is too big. Keep it under ${MAX_UPLOAD_MB}MB.`); return; }
+    setErr(null); setUploading(true); setUploaded(null); setWarnings([]);
+    try {
+      const meta = await FileProbe.probe(f);
+      setWarnings(FileProbe.specWarnings(meta));
+      const ext = (f.name.split(".").pop() || "bin").toLowerCase();
+      const name = f.name.replace(/\.[^.]+$/, "");
+      const c = await uploadCreative(f, { source: "upload", ext, name, ...meta });
+      setUploaded(c);
+      setRecent((prev) => prev ? [c, ...prev].slice(0, 4) : [c]);
+      const thumb = await signedCreativeUrl(c.storage_path);
+      if (thumb) setThumbs((t) => ({ [c.id]: thumb, ...t }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
   if (!isSupabaseConfigured) {
     return <Shell><p className="text-ink-400 text-sm">Studio is not configured in this build.</p></Shell>;
   }
 
   return (
     <Shell>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
-        <Link href="/studio/ingest/upload" className="group">
-          <SourceCard icon={Upload} title="Upload a file" desc="MP4, PNG, or JPG. Up to 50MB. Lands in your library, ready to book." accent="cy" />
-        </Link>
-        <Link href="/studio/ingest/embed" className="group">
-          <SourceCard icon={Link2} title="Embed a URL" desc="Paste a TikTok, YouTube, or direct MP4 link. We pull a public preview you can remix." accent="cy" />
-        </Link>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="video/mp4,image/png,image/jpeg"
+        className="hidden"
+        onChange={(e) => onFile(e.target.files?.[0])}
+      />
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="text-left group disabled:opacity-60">
+          <SourceCard
+            icon={uploading ? Loader2 : Upload}
+            iconSpin={uploading}
+            title={uploading ? "Uploading…" : "Upload a file"}
+            desc="MP4, PNG, or JPG. Up to 50MB. Lands in your library, ready to book."
+            accent="cy"
+          />
+        </button>
         <Link href="/studio/create" className="group">
           <SourceCard icon={Wand2} title="Design with a template" desc="Glow, Bold, or Minimal. Type a headline, pick a color, done." accent="lime" />
         </Link>
         <Link href="/studio/generate" className="group">
-          <SourceCard icon={Sparkles} title="Generate with AI" desc="Seedance, Kling, Veo, or Nano Banana. Text-to-street or remix a still." accent="lime" />
+          <SourceCard icon={Sparkles} title="Generate with AI" desc="Seedance, Kling, Veo, or Nano Banana. Text to street-ready video, or remix a still." accent="lime" />
         </Link>
       </div>
+
+      <div className="mt-4">
+        <Link href="/studio/ingest/embed" className="inline-flex items-center gap-2 text-[12px] text-ink-400 hover:text-cy-300">
+          <Link2 size={12} /> Paste a TikTok / YouTube URL
+        </Link>
+      </div>
+
+      {err && <p className="text-sm text-red-400 mt-5">{err}</p>}
+      {uploaded && (
+        <div className="mt-5 rounded-lg border border-lime-400/30 bg-lime-400/5 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-[13px] text-lime-200 inline-flex items-center gap-2">
+            <CheckCircle2 size={15} /> {uploaded.name ?? "Creative"} is in your library.
+          </span>
+          <div className="flex gap-2">
+            <Link href={`/studio/generate?from=${uploaded.id}`} className="btn btn-ghost">Remix with AI</Link>
+            <Link href="/library" className="btn btn-ghost">View library</Link>
+            <Link href="/book" className="btn btn-lime">Book it <ArrowRight size={14} /></Link>
+          </div>
+        </div>
+      )}
+      {uploaded && warnings.length > 0 && (
+        <div className="mt-2.5 rounded-lg border border-amber-400/30 bg-amber-400/5 px-4 py-3 space-y-1.5">
+          {warnings.map((w, i) => (
+            <p key={i} className="text-[12px] text-amber-200 flex items-start gap-2">
+              <AlertTriangle size={13} className="shrink-0 mt-0.5" /> <span>{w}</span>
+            </p>
+          ))}
+        </div>
+      )}
 
       <div className="mt-12">
         <div className="flex items-center justify-between mb-4">
@@ -61,7 +128,7 @@ export default function StudioPage() {
         {!recent && <div className="flex items-center gap-2 text-ink-400 text-sm py-8 justify-center"><Loader2 size={15} className="animate-spin" /> Loading…</div>}
         {recent && recent.length === 0 && (
           <div className="card p-6 md:p-10 text-center">
-            <p className="text-ink-400 text-sm">No creatives yet. Upload, embed, or generate one above.</p>
+            <p className="text-ink-400 text-sm">No creatives yet. Upload a file or design one above.</p>
           </div>
         )}
         {recent && recent.length > 0 && (
@@ -70,7 +137,7 @@ export default function StudioPage() {
               const url = thumbs[c.id];
               const isVideo = StudioMedia.isVideoPath(c.storage_path);
               return (
-                <Link key={c.id} href={`/studio/generate?from=${c.id}`} className="card p-3 group block">
+                <Link key={c.id} href="/library" className="card p-3 group block">
                   <div className="relative aspect-[9/16] rounded-lg overflow-hidden bg-bg-900 mb-2 flex items-center justify-center">
                     {url ? (
                       isVideo
@@ -80,7 +147,6 @@ export default function StudioPage() {
                     ) : <Loader2 size={14} className="animate-spin text-ink-600" />}
                   </div>
                   <div className="text-[12px] text-ink-100 truncate px-0.5">{c.name ?? "Untitled"}</div>
-                  <div className="text-[11px] text-ink-500 px-0.5 mt-0.5">Remix with AI →</div>
                 </Link>
               );
             })}
@@ -104,9 +170,9 @@ function Shell({ children }: { children: ReactNode }) {
   );
 }
 
-function SourceCard({ icon: Icon, title, desc, accent }: {
+function SourceCard({ icon: Icon, iconSpin, title, desc, accent }: {
   icon: ComponentType<{ size?: number; className?: string; strokeWidth?: number }>;
-  title: string; desc: string; accent: "cy" | "lime";
+  iconSpin?: boolean; title: string; desc: string; accent: "cy" | "lime";
 }) {
   const accentClasses = accent === "cy"
     ? "group-hover:shadow-glow-cy group-hover:border-cy-400/40"
@@ -117,7 +183,7 @@ function SourceCard({ icon: Icon, title, desc, accent }: {
         <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
           accent === "cy" ? "bg-cy-400/10 text-cy-300" : "bg-lime-400/10 text-lime-300"
         }`}>
-          <Icon size={20} strokeWidth={1.8} />
+          <Icon size={20} strokeWidth={1.8} className={iconSpin ? "animate-spin" : undefined} />
         </div>
       </div>
       <h3 className="text-base font-medium text-ink-100">{title}</h3>
