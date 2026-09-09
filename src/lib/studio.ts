@@ -21,6 +21,10 @@ export type StudioProviders = {
   higgsfield: boolean;
 };
 
+export type StudioEmbedConfig = {
+  instagram_token: boolean;
+};
+
 export type GenerateJob = {
   request_id: string;
   fal_model: string;
@@ -199,6 +203,21 @@ export class StudioApi {
       content_type: typeof body.content_type === "string" ? body.content_type : undefined,
       kind: body.kind === "image" || body.kind === "video" ? body.kind : undefined,
     };
+  }
+
+  static async embedConfig(): Promise<StudioEmbedConfig> {
+    if (!STUDIO_EMBED_ENDPOINT) return { instagram_token: false };
+    try {
+      const token = await StudioApi.token();
+      const res = await fetch(STUDIO_EMBED_ENDPOINT, {
+        headers: StudioApi.headers(token),
+      });
+      const body = (await res.json().catch(() => ({}))) as StudioEmbedConfig & { error?: string };
+      if (!res.ok) return { instagram_token: false };
+      return { instagram_token: Boolean(body.instagram_token) };
+    } catch {
+      return { instagram_token: false };
+    }
   }
 
   static async embed(url: string, name?: string): Promise<{ creative: Creative; note?: string }> {

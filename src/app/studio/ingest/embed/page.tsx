@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type Creative } from "@/lib/db";
 import { useSession } from "@/lib/auth-client";
 import { isSupabaseConfigured } from "@/lib/supabase";
-import { StudioApi } from "@/lib/studio";
+import { StudioApi, type StudioEmbedConfig } from "@/lib/studio";
 import { StudioChrome } from "@/components/studio/StudioChrome";
 import { Loader2, CheckCircle2, ArrowRight, Link2 } from "lucide-react";
+
+const EMBED_SUBTITLE = "TikTok, YouTube, and public Instagram posts save a preview. Direct MP4 also works.";
 
 export default function StudioEmbedPage() {
   const router = useRouter();
@@ -19,13 +21,19 @@ export default function StudioEmbedPage() {
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [saved, setSaved] = useState<Creative | null>(null);
+  const [config, setConfig] = useState<StudioEmbedConfig | null>(null);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || loading || !user) return;
+    StudioApi.embedConfig().then(setConfig).catch(() => setConfig({ instagram_token: false }));
+  }, [user, loading]);
 
   if (!isSupabaseConfigured) {
-    return <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle="Paste a public TikTok, Instagram, YouTube, or direct MP4."><p className="text-ink-400 text-sm">Studio is not configured in this build.</p></StudioChrome>;
+    return <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle={EMBED_SUBTITLE}><p className="text-ink-400 text-sm">Studio is not configured in this build.</p></StudioChrome>;
   }
   if (!loading && !user) {
     router.replace("/sign-in?next=/studio/ingest/embed");
-    return <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle="Paste a public TikTok, Instagram, YouTube, or direct MP4."><Loader2 size={15} className="animate-spin text-ink-400" /></StudioChrome>;
+    return <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle={EMBED_SUBTITLE}><Loader2 size={15} className="animate-spin text-ink-400" /></StudioChrome>;
   }
 
   async function onSubmit(e: FormEvent) {
@@ -43,7 +51,7 @@ export default function StudioEmbedPage() {
   }
 
   return (
-    <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle="TikTok and YouTube save a public preview. Instagram needs a Meta token we do not have yet — paste a direct MP4 instead.">
+    <StudioChrome kicker="Studio · embed" title="Embed a URL" subtitle={EMBED_SUBTITLE}>
       {saved ? (
         <div className="card p-8 text-center max-w-lg mx-auto">
           <CheckCircle2 size={40} className="mx-auto text-lime-300 mb-4" />
@@ -66,7 +74,7 @@ export default function StudioEmbedPage() {
                 required
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://www.tiktok.com/@brand/video/…"
+                placeholder="https://www.instagram.com/p/… or TikTok / YouTube / MP4"
                 className="w-full pl-9 pr-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none placeholder-ink-500"
               />
             </div>
@@ -83,6 +91,9 @@ export default function StudioEmbedPage() {
             />
           </div>
           {err && <p className="text-sm text-red-400">{err}</p>}
+          <p className="text-[12px] text-ink-500">
+            Instagram uses Meta oEmbed (tokenless). Optional <span className="font-mono text-[11px]">META_OEMBED_TOKEN</span> on studio-embed raises rate limits; {config?.instagram_token ? "detected." : "not set."}
+          </p>
           <div className="flex justify-end">
             <button type="submit" disabled={busy || !url.trim()} className="btn btn-lime disabled:opacity-40">
               {busy ? <Loader2 size={15} className="animate-spin" /> : "Add to library"}
