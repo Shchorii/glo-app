@@ -227,7 +227,7 @@ function GenerateForm() {
               <span className="text-lime-300">fal.ai</span> — Seedance, Kling, Veo, Nano Banana. {providers?.fal ? "Key present." : "Key missing."}
             </p>
             <p className="text-sm text-ink-400">
-              Higgsfield MCP is for Cursor/Claude agents at mcp.higgsfield.ai — not a second Studio form. Optional <span className="font-mono text-[11px]">HIGGSFIELD_API_KEY</span> is reserved; {providers?.higgsfield ? "detected." : "not set."}
+              Higgsfield MCP lives in <span className="font-mono text-[11px]">.cursor/mcp.json</span> → mcp.higgsfield.ai — not a second Studio form. Optional <span className="font-mono text-[11px]">HIGGSFIELD_API_KEY</span> is reserved for REST; {providers?.higgsfield ? "detected." : "not set."}
             </p>
           </aside>
         </div>

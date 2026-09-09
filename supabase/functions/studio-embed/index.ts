@@ -1,6 +1,9 @@
 // Supabase Edge Function: ingest a public video/image URL into the caller's library.
-// Auth: verify_jwt ON. Direct MP4/image or TikTok/YouTube oEmbed preview.
+// Auth: verify_jwt ON. Direct MP4/image or TikTok/YouTube/Instagram preview.
+// Instagram: Meta Graph oEmbed (tokenless since 2026-06-15). Optional META_OEMBED_TOKEN
+// (env or Vault) for higher rate limits — same secret wiring as FAL_KEY on studio-generate.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import postgres from "npm:postgres@3.4.5";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -8,6 +11,40 @@ const CORS = {
 };
 
 const MAX_BYTES = 50 * 1024 * 1024;
+const META_OEMBED_TOKEN = "META_OEMBED_TOKEN";
+const IG_TOKEN_MISSING =
+  "Instagram embed is not configured yet. Set META_OEMBED_TOKEN on the studio-embed Edge Function (or in Vault).";
+const IG_CRAWLER_UA = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)";
+
+class StudioSecrets {
+  static cache = new Map<string, string | null>();
+
+  static async get(name: string): Promise<string | null> {
+    if (StudioSecrets.cache.has(name)) return StudioSecrets.cache.get(name) ?? null;
+    const envVal = Deno.env.get(name);
+    if (envVal) {
+      StudioSecrets.cache.set(name, envVal);
+      return envVal;
+    }
+    const dbUrl = Deno.env.get("SUPABASE_DB_URL");
+    if (!dbUrl) {
+      StudioSecrets.cache.set(name, null);
+      return null;
+    }
+    const sql = postgres(dbUrl, { max: 1, prepare: false });
+    try {
+      const rows = await sql`select decrypted_secret from vault.decrypted_secrets where name = ${name} limit 1`;
+      const val = (rows[0]?.decrypted_secret as string | undefined) ?? null;
+      StudioSecrets.cache.set(name, val);
+      return val;
+    } catch {
+      StudioSecrets.cache.set(name, null);
+      return null;
+    } finally {
+      await sql.end({ timeout: 2 });
+    }
+  }
+}
 
 class EmbedIngest {
   static normalize(raw: string): URL {
@@ -44,14 +81,103 @@ class EmbedIngest {
     return h === "youtube.com" || h === "youtu.be" || h.endsWith(".youtube.com");
   }
 
-  static async oEmbed(url: URL): Promise<{ title: string; thumbnail?: string } | null> {
+  static decodeEntities(s: string): string {
+    return s
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;|&apos;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+      .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)));
+  }
+
+  static metaContent(html: string, property: string): string | undefined {
+    const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const a = html.match(new RegExp(`property="${escaped}" content="([^"]+)"`, "i"));
+    if (a?.[1]) return EmbedIngest.decodeEntities(a[1]);
+    const b = html.match(new RegExp(`content="([^"]+)" property="${escaped}"`, "i"));
+    return b?.[1] ? EmbedIngest.decodeEntities(b[1]) : undefined;
+  }
+
+  static isDefaultIgLogo(image: string): boolean {
+    return /rsrc\.php|static\.cdninstagram\.com\/rsrc/i.test(image);
+  }
+
+  /** Meta no longer returns thumbnail_url from oEmbed; pull og:image from the post HTML. */
+  static async instagramHtmlMeta(url: URL): Promise<{ title?: string; image?: string }> {
+    const res = await fetch(url.toString(), {
+      redirect: "follow",
+      signal: AbortSignal.timeout(10000),
+      headers: { "User-Agent": IG_CRAWLER_UA, Accept: "text/html" },
+    });
+    if (!res.ok) return {};
+    const html = await res.text();
+    const image = EmbedIngest.metaContent(html, "og:image");
+    const title = EmbedIngest.metaContent(html, "og:title");
+    if (image && EmbedIngest.isDefaultIgLogo(image)) return { title };
+    return { title, image };
+  }
+
+  static async instagramMediaFallback(url: URL): Promise<string | undefined> {
+    const media = new URL(url.toString());
+    media.search = "";
+    media.hash = "";
+    media.pathname = `${media.pathname.replace(/\/$/, "")}/media/`;
+    media.searchParams.set("size", "l");
+    const res = await fetch(media.toString(), {
+      redirect: "follow",
+      signal: AbortSignal.timeout(10000),
+      headers: {
+        "User-Agent": "GloStudio/1.0 (https://app.we-are-glo.com)",
+        Accept: "image/*,*/*",
+        Referer: "https://www.instagram.com/",
+      },
+    });
+    const ct = res.headers.get("content-type") || "";
+    if (!res.ok || !/^image\//i.test(ct)) return undefined;
+    return res.url;
+  }
+
+  static tokenRequired(data: { error?: { message?: string; type?: string; code?: number } }): boolean {
+    const code = data.error?.code;
+    const msg = data.error?.message ?? "";
+    return code === 104 || code === 190 || /access token/i.test(msg);
+  }
+
+  static async instagramOEmbed(url: URL, token: string | null): Promise<{ title: string; thumbnail?: string }> {
+    const endpoint = new URL("https://graph.facebook.com/v25.0/instagram_oembed");
+    endpoint.searchParams.set("url", url.toString());
+    endpoint.searchParams.set("omitscript", "true");
+    if (token) endpoint.searchParams.set("access_token", token);
+
+    const res = await fetch(endpoint.toString(), { signal: AbortSignal.timeout(8000) });
+    const data = await res.json().catch(() => ({})) as {
+      error?: { message?: string; type?: string; code?: number };
+    };
+
+    if (!res.ok) {
+      if (EmbedIngest.tokenRequired(data) && !token) throw new Error(IG_TOKEN_MISSING);
+      if (EmbedIngest.tokenRequired(data) && token) {
+        throw new Error("Instagram Meta token was rejected. Check META_OEMBED_TOKEN on the studio-embed Edge Function (or in Vault).");
+      }
+      throw new Error("Could not read that Instagram post. Check the URL is public.");
+    }
+
+    const meta = await EmbedIngest.instagramHtmlMeta(url);
+    const thumbnail = meta.image ?? await EmbedIngest.instagramMediaFallback(url);
+    if (!thumbnail) throw new Error("Could not fetch a public preview for that Instagram post.");
+    const title = (meta.title || "Instagram post").slice(0, 80);
+    return { title, thumbnail };
+  }
+
+  static async oEmbed(url: URL, token: string | null): Promise<{ title: string; thumbnail?: string } | null> {
     const target = url.toString();
+    if (EmbedIngest.isInstagram(url)) return EmbedIngest.instagramOEmbed(url, token);
+
     let endpoint: string | null = null;
     if (EmbedIngest.isTikTok(url)) endpoint = `https://www.tiktok.com/oembed?url=${encodeURIComponent(target)}`;
     else if (EmbedIngest.isYouTube(url)) endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(target)}&format=json`;
-    else if (EmbedIngest.isInstagram(url)) {
-      throw new Error("Instagram needs a Meta oEmbed token we do not have in this build. Paste a direct MP4, or a TikTok URL.");
-    }
     if (!endpoint) return null;
     const res = await fetch(endpoint, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error("Could not read that post. Check the URL is public.");
@@ -73,12 +199,14 @@ class EmbedIngest {
   }
 
   static async download(url: string): Promise<{ bytes: Uint8Array; contentType: string; ext: string }> {
+    const igCdn = /instagram|fbcdn|cdninstagram/i.test(url);
     const res = await fetch(url, {
       redirect: "follow",
       signal: AbortSignal.timeout(25000),
       headers: {
-        "User-Agent": "GloStudio/1.0 (https://app.we-are-glo.com)",
+        "User-Agent": igCdn ? IG_CRAWLER_UA : "GloStudio/1.0 (https://app.we-are-glo.com)",
         Accept: "image/*,video/*,*/*",
+        ...(igCdn ? { Referer: "https://www.instagram.com/" } : {}),
       },
     });
     if (!res.ok) throw new Error(`Could not fetch media (${res.status}).`);
@@ -107,9 +235,15 @@ function json(body: unknown, status = 200) {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
-  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   try {
+    const igToken = await StudioSecrets.get(META_OEMBED_TOKEN);
+
+    if (req.method === "GET") {
+      return json({ instagram_token: Boolean(igToken) });
+    }
+    if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
     const url = Deno.env.get("SUPABASE_URL");
     const anon = Deno.env.get("SUPABASE_ANON_KEY");
     const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -126,8 +260,8 @@ Deno.serve(async (req) => {
     if (!payload.url || typeof payload.url !== "string") return json({ error: "url required" }, 400);
 
     const source = EmbedIngest.normalize(payload.url);
-    const oembed = await EmbedIngest.oEmbed(source).catch((e) => {
-      if (e instanceof Error && e.message.includes("Instagram")) throw e;
+    const oembed = await EmbedIngest.oEmbed(source, igToken).catch((e) => {
+      if (e instanceof Error && (e.message === IG_TOKEN_MISSING || e.message.includes("Instagram"))) throw e;
       return null;
     });
 
@@ -166,7 +300,7 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    const status = /sign in/i.test(msg) ? 401 : 400;
+    const status = /sign in/i.test(msg) ? 401 : /not configured yet/i.test(msg) ? 503 : 400;
     return json({ error: msg }, status);
   }
 });
