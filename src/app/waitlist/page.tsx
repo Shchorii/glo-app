@@ -150,7 +150,6 @@ function WaitlistForm() {
               ))}
             </select>
           </div>
-          <div>
           {error && <p className="text-sm text-red-400">{error}</p>}
           <button
             type="submit"
