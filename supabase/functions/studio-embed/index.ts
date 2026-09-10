@@ -4,6 +4,7 @@
 // (env or Vault) for higher rate limits — same secret wiring as FAL_KEY on studio-generate.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import postgres from "npm:postgres@3.4.5";
+import { notifyModerationIngest } from "../_shared/moderation.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -291,6 +292,8 @@ Deno.serve(async (req) => {
       .select("*")
       .single();
     if (error) throw error;
+
+    await notifyModerationIngest(admin, data, file.contentType);
 
     return json({
       creative: data,

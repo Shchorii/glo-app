@@ -7,6 +7,7 @@ import {
   listScreens, createCampaign, uploadCreative, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
   type Screen, type Creative,
 } from "@/lib/db";
+import { creativeAttachError } from "@/lib/moderation";
 import { useSession } from "@/lib/auth-client";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import BookMap from "@/components/BookMap";
@@ -158,6 +159,10 @@ export default function BookPage() {
     setSaveErr(null);
     try {
       const cr = await resolveCreative();
+      if (cr) {
+        const blocked = creativeAttachError(cr, status);
+        if (blocked) throw new Error(blocked);
+      }
       const id = await createCampaign({
         name: name.trim() || `${selectedScreens[0]?.city ?? "Glo"} campaign`,
         start_date: startDate,
@@ -421,9 +426,12 @@ export default function BookPage() {
               {libItems && libItems.length === 0 && (
                 <p className="text-[13px] text-ink-500">Your library is empty. Upload a file here or design one in the <Link href="/studio" className="text-cy-300 hover:text-cy-200">Studio</Link>.</p>
               )}
-              {libItems && libItems.length > 0 && (
+              {libItems && libItems.filter((lc) => lc.review_status !== "rejected").length === 0 && libItems.length > 0 && (
+                <p className="text-[13px] text-ink-500">Rejected creatives cannot attach. Make a new one in the <Link href="/studio" className="text-cy-300 hover:text-cy-200">Studio</Link>.</p>
+              )}
+              {libItems && libItems.filter((lc) => lc.review_status !== "rejected").length > 0 && (
                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
-                  {libItems.map((lc) => {
+                  {libItems.filter((lc) => lc.review_status !== "rejected").map((lc) => {
                     const url = libUrls[lc.id];
                     const isVid = lc.storage_path.endsWith(".mp4");
                     const isSel = creative.kind === "library" && creative.creative.id === lc.id;
