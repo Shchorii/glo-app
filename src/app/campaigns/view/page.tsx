@@ -7,9 +7,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   getCampaign, cancelCampaign, deleteCampaign, signedCreativeUrl, startCheckout, daysBetween, fmtUsd,
-  listMyCreatives, type Creative, type CampaignDetail, type CampaignStatus,
+  listMyCreatives, attachCampaignCreative, type Creative, type CampaignDetail, type CampaignStatus,
 } from "@/lib/db";
-import { getSupabase } from "@/lib/supabase";
+import { creativeAttachError, isPaidLiveStatus } from "@/lib/moderation";
 import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock, Trash2, Timer, RefreshCw } from "lucide-react";
 import { daypartSummary } from "@/lib/dayparts";
 
@@ -143,7 +143,13 @@ function CampaignView() {
     if (alts) return;
     try {
       const mine = await listMyCreatives();
-      const options = mine.filter((cr) => cr.id !== current.creative?.id && cr.review_status !== "rejected");
+      const paid = isPaidLiveStatus(current.status);
+      const options = mine.filter((cr) => {
+        if (cr.id === current.creative?.id) return false;
+        if (cr.review_status === "rejected") return false;
+        if (paid) return cr.review_status === "approved";
+        return true;
+      });
       setAlts(options);
       options.slice(0, 12).forEach(async (cr) => {
         const u = await signedCreativeUrl(cr.storage_path);
@@ -158,10 +164,9 @@ function CampaignView() {
     if (!c || c === "loading") return;
     setSwapping(creativeId); setErr(null);
     try {
-      const sb = getSupabase();
-      if (!sb) throw new Error("Not configured");
-      const { error } = await sb.from("campaigns").update({ creative_id: creativeId }).eq("id", c.id);
-      if (error) throw error;
+      const chosen = alts?.find((cr) => cr.id === creativeId);
+      if (!chosen) throw new Error("Creative not found.");
+      await attachCampaignCreative(c.id, chosen, c.status);
       const fresh = await getCampaign(c.id);
       if (fresh) {
         setC(fresh);
@@ -176,6 +181,7 @@ function CampaignView() {
   }
 
   const rejected = c.creative?.review_status === "rejected";
+  const payBlocked = c.creative ? creativeAttachError(c.creative, "pending_review") : null;
 
   return (
     <div>
@@ -217,9 +223,12 @@ function CampaignView() {
               </span>
               . Complete payment before the slot is released.
             </span>
-            <button type="button" disabled={paying} onClick={onPay} className="btn btn-lime disabled:opacity-40">
+            <button type="button" disabled={paying || Boolean(payBlocked)} onClick={onPay} className="btn btn-lime disabled:opacity-40">
               {paying ? <Loader2 size={15} className="animate-spin" /> : <><CreditCard size={15} /> Complete payment · {fmtUsd(c.total_usd)}</>}
             </button>
+            {payBlocked && (
+              <p className="w-full text-[12px] text-amber-200">{payBlocked} Swap in an approved creative to check out.</p>
+            )}
           </div>
         )}
         {c.status === "pending_payment" && !justPaid && secondsLeft === 0 && (
@@ -244,40 +253,6 @@ function CampaignView() {
               </button>
               <Link href="/studio" className="btn btn-ghost text-[13px]">Make a new one in Studio</Link>
             </div>
-            {showReplace && (
-              <div className="mt-3">
-                {alts === null ? (
-                  <p className="text-[12px] text-ink-500 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Loading your library</p>
-                ) : alts.length === 0 ? (
-                  <p className="text-[12px] text-ink-500">No other creatives in your library yet; make one in Studio and come back.</p>
-                ) : (
-                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                    {alts.slice(0, 12).map((cr) => (
-                      <button
-                        key={cr.id}
-                        type="button"
-                        disabled={swapping !== null}
-                        onClick={() => swapCreative(cr.id)}
-                        className="relative aspect-[9/16] rounded-md overflow-hidden border border-line-800 hover:border-cy-400/60 bg-bg-900 disabled:opacity-50"
-                        title={cr.name ?? cr.source}
-                      >
-                        {altThumbs[cr.id] ? (
-                          cr.storage_path.endsWith(".mp4")
-                            ? <video src={altThumbs[cr.id]} className="w-full h-full object-cover" muted playsInline />
-                            : /* eslint-disable-next-line @next/next/no-img-element */
-                              <img src={altThumbs[cr.id]} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="absolute inset-0 flex items-center justify-center"><ImageIcon size={14} className="text-ink-600" /></span>
-                        )}
-                        {swapping === cr.id && (
-                          <span className="absolute inset-0 bg-bg-950/70 flex items-center justify-center"><Loader2 size={14} className="animate-spin text-cy-300" /></span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         )}
 
@@ -300,10 +275,53 @@ function CampaignView() {
                 <div className="text-ink-100 capitalize">{c.creative.source}</div>
                 <div className="mt-0.5 capitalize">Review: {c.creative.review_status}</div>
                 {c.creative.rejection_reason && <div className="mt-0.5 text-red-400">{c.creative.rejection_reason}</div>}
+                {c.status === "pending_payment" && payBlocked && !rejected && (
+                  <button type="button" onClick={openReplace} className="btn btn-ghost text-[12px] mt-2">
+                    <RefreshCw size={13} /> Replace creative
+                  </button>
+                )}
               </div>
             </div>
           ) : (
             <p className="text-[13px] text-ink-500">No creative attached yet.</p>
+          )}
+          {showReplace && (
+            <div className="mt-3">
+              {alts === null ? (
+                <p className="text-[12px] text-ink-500 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Loading your library</p>
+              ) : alts.length === 0 ? (
+                <p className="text-[12px] text-ink-500">
+                  {isPaidLiveStatus(c.status)
+                    ? "Only approved creatives can attach to a paid campaign. Make a new one in Studio and wait for approval."
+                    : "No other creatives in your library yet; make one in Studio and come back."}
+                </p>
+              ) : (
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                  {alts.slice(0, 12).map((cr) => (
+                    <button
+                      key={cr.id}
+                      type="button"
+                      disabled={swapping !== null}
+                      onClick={() => swapCreative(cr.id)}
+                      className="relative aspect-[9/16] rounded-md overflow-hidden border border-line-800 hover:border-cy-400/60 bg-bg-900 disabled:opacity-50"
+                      title={cr.name ?? cr.source}
+                    >
+                      {altThumbs[cr.id] ? (
+                        cr.storage_path.endsWith(".mp4")
+                          ? <video src={altThumbs[cr.id]} className="w-full h-full object-cover" muted playsInline />
+                          : /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={altThumbs[cr.id]} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="absolute inset-0 flex items-center justify-center"><ImageIcon size={14} className="text-ink-600" /></span>
+                      )}
+                      {swapping === cr.id && (
+                        <span className="absolute inset-0 bg-bg-950/70 flex items-center justify-center"><Loader2 size={14} className="animate-spin text-cy-300" /></span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
 

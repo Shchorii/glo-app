@@ -75,13 +75,25 @@ Deno.serve(async (req) => {
     const admin = createClient(url, service);
     const { data: c, error: cErr } = await admin
       .from("campaigns")
-      .select("id, user_id, name, start_date, end_date, status, dayparts, campaign_screens(screens(daily_price_usd))")
+      .select("id, user_id, name, start_date, end_date, status, dayparts, creative_id, creatives(review_status, rejection_reason), campaign_screens(screens(daily_price_usd))")
       .eq("id", campaign_id)
       .maybeSingle();
     if (cErr) throw cErr;
     if (!c || c.user_id !== user.id) return json({ error: "Campaign not found." }, 404);
     if (c.status !== "pending_payment" && c.status !== "draft") {
       return json({ error: `Campaign is ${c.status}; nothing to pay.` }, 409);
+    }
+
+    const attached = c.creatives as { review_status?: string; rejection_reason?: string | null } | { review_status?: string; rejection_reason?: string | null }[] | null;
+    const creative = Array.isArray(attached) ? attached[0] : attached;
+    if (creative) {
+      if (creative.review_status === "rejected") {
+        const reason = (creative.rejection_reason ?? "").trim() || "Does not meet content guidelines";
+        return json({ error: `This creative was rejected: ${reason}` }, 409);
+      }
+      if (creative.review_status !== "approved") {
+        return json({ error: "This creative is still in review. You can pay once it's approved." }, 409);
+      }
     }
 
     const prices = ((c.campaign_screens as { screens: { daily_price_usd: string | number } }[]) ?? [])

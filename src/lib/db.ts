@@ -1,6 +1,7 @@
 "use client";
 import { getSupabase } from "@/lib/supabase";
 import { CHECKOUT_ENDPOINT } from "@/lib/endpoints";
+import { creativeAttachError, pingModerationIngest } from "@/lib/moderation";
 
 export type Screen = {
   id: string;
@@ -127,6 +128,21 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
   const uid = auth.user?.id;
   if (!uid) throw new Error("Sign in to book screens.");
 
+  if (input.creative_id) {
+    const { data: cr, error: crErr } = await client
+      .from("creatives")
+      .select("review_status, rejection_reason")
+      .eq("id", input.creative_id)
+      .maybeSingle();
+    if (crErr) throw crErr;
+    if (!cr) throw new Error("Creative not found.");
+    const blocked = creativeAttachError(
+      cr as { review_status: Creative["review_status"]; rejection_reason: string | null },
+      input.status,
+    );
+    if (blocked) throw new Error(blocked);
+  }
+
   // RLS only allows attaching screens while a campaign is a draft, so we
   // always insert as draft, link the screens, then flip to the requested status.
   const { data, error } = await client
@@ -212,7 +228,16 @@ export async function uploadCreative(
     .select("*")
     .single();
   if (error) throw error;
+  pingModerationIngest(data.id as string, blob.type || undefined);
   return data as Creative;
+}
+
+/** Attach a creative to a campaign. Paid/live require approved; rejected is always blocked. */
+export async function attachCampaignCreative(campaignId: string, creative: Creative, campaignStatus: CampaignStatus): Promise<void> {
+  const blocked = creativeAttachError(creative, campaignStatus);
+  if (blocked) throw new Error(blocked);
+  const { error } = await sb().rpc("attach_campaign_creative", { cid: campaignId, crid: creative.id });
+  if (error) throw error;
 }
 
 /** All of the signed-in user's creatives, newest first. */

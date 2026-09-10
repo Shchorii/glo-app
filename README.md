@@ -22,6 +22,8 @@ Set these as **Supabase Edge Function secrets** or **Vault** names. Values do no
 | --- | --- | --- |
 | `FAL_KEY` | `studio-generate` | Yes, for in-app generate/remix |
 | `META_OEMBED_TOKEN` | `studio-embed` | No. Instagram oEmbed is tokenless as of 2026-06-15; a Meta user/app token raises Graph rate limits. If Graph asks for a token, the function returns 503 with this name — same pattern as missing `FAL_KEY`. |
+| `MODERATION_WEBHOOK_URL` | `studio-ingest-notify` (+ Vault) | No. If missing, ingest still succeeds and the webhook is skipped (logged once). |
+| `MODERATION_WEBHOOK_KEY` | `studio-ingest-notify` (+ Vault) | No. Bearer + `X-Automation-Key` for the Glo Moderation `studio-ingest-moderate` routine. |
 | `HIGGSFIELD_API_KEY` / `HIGGSFIELD_API_SECRET` | reserved | No. Agents use Higgsfield MCP OAuth, not these keys. |
 
 Redeploy `studio-embed` after this lands so Instagram ingest uses Graph oEmbed.
