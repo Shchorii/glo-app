@@ -7,6 +7,11 @@ import { fromPrice } from "@/lib/dayparts";
 
 type DrawMode = null | "circle" | "poly";
 
+/** Below this zoom we show aggregated bubbles instead of individual screens. */
+const CLUSTER_ZOOM = 11;
+/** Hard ceiling on DOM markers, whatever the viewport holds. */
+const MARKER_CAP = 500;
+
 type DrawState = {
   mode: DrawMode;
   center: [number, number] | null;      // circle center
@@ -31,6 +36,11 @@ export default function BookMap({
   const elRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("leaflet").Map | null>(null);
   const markersRef = useRef<Map<string, import("leaflet").Marker>>(new Map());
+  const clusterRef = useRef<import("leaflet").Marker[]>([]);
+  const renderRef = useRef<(() => void) | null>(null);
+  const [shown, setShown] = useState(0);
+  const [clustered, setClustered] = useState(true);
+  const [capped, setCapped] = useState(false);
   const roRef = useRef<ResizeObserver | null>(null);
   const onToggleRef = useRef(onToggle);
   onToggleRef.current = onToggle;
@@ -128,24 +138,99 @@ export default function BookMap({
         }
       ).addTo(map);
 
-      screens.forEach((s) => {
-        const marker = L.marker([s.lat, s.lng], { icon: iconFor(L, false) }).addTo(map);
-        marker.bindTooltip(
-          `<div class="glo-tip"><div class="glo-tip-corner">${esc(s.name)}</div>
-           <div class="glo-tip-meta">${esc(s.city)} &middot; ${esc(s.venue_type)} &middot; from $${fromPrice(s.daily_price_usd)}/day &middot; tap to select</div></div>`,
-          { direction: "top", offset: [0, -16], opacity: 1 }
-        );
-        marker.on("click", () => {
-          if (draw.current.mode) return; // ignore marker taps while drawing
-          onToggleRef.current(s.id);
+      /**
+       * Render only what is in view. Below CLUSTER_ZOOM we draw grid-aggregated
+       * bubbles; above it, individual markers capped at MARKER_CAP. A national
+       * inventory is far too large to put one DOM marker per screen on the map.
+       */
+      function render() {
+        const b = map.getBounds();
+        const zoom = map.getZoom();
+
+        clusterRef.current.forEach((c) => map.removeLayer(c));
+        clusterRef.current = [];
+
+        const inView = screensRef.current.filter((s) => b.contains([s.lat, s.lng]));
+
+        if (zoom < CLUSTER_ZOOM) {
+          markersRef.current.forEach((m) => map.removeLayer(m));
+          markersRef.current.clear();
+
+          const cell = 90 / Math.pow(2, zoom);
+          const buckets = new Map<string, { lat: number; lng: number; n: number; min: number }>();
+          inView.forEach((s) => {
+            const key = `${Math.floor(s.lat / cell)}:${Math.floor(s.lng / cell)}`;
+            const cur = buckets.get(key);
+            if (cur) {
+              cur.lat += s.lat; cur.lng += s.lng; cur.n += 1;
+              cur.min = Math.min(cur.min, s.daily_price_usd);
+            } else {
+              buckets.set(key, { lat: s.lat, lng: s.lng, n: 1, min: s.daily_price_usd });
+            }
+          });
+
+          buckets.forEach((v) => {
+            const cLat = v.lat / v.n, cLng = v.lng / v.n;
+            const bubble = L.marker([cLat, cLng], { icon: clusterIcon(L, v.n) }).addTo(map);
+            bubble.bindTooltip(
+              `<div class="glo-tip"><div class="glo-tip-corner">${v.n} screen${v.n === 1 ? "" : "s"}</div>
+               <div class="glo-tip-meta">from $${fromPrice(v.min)}/day &middot; tap to zoom in</div></div>`,
+              { direction: "top", offset: [0, -18], opacity: 1 }
+            );
+            bubble.on("click", () => {
+              if (draw.current.mode) return;
+              map.setView([cLat, cLng], Math.min(zoom + 3, CLUSTER_ZOOM + 1));
+            });
+            clusterRef.current.push(bubble);
+          });
+          setShown(inView.length);
+          setClustered(true);
+          setCapped(false);
+          return;
+        }
+
+        setClustered(false);
+        const visible = inView.slice(0, MARKER_CAP);
+        const keep = new Set(visible.map((s) => s.id));
+
+        markersRef.current.forEach((m, id) => {
+          if (!keep.has(id)) { map.removeLayer(m); markersRef.current.delete(id); }
         });
-        markersRef.current.set(s.id, marker);
-      });
+
+        visible.forEach((s) => {
+          if (markersRef.current.has(s.id)) return;
+          const marker = L.marker([s.lat, s.lng], {
+            icon: iconFor(L, selectedRef.current.has(s.id)),
+          }).addTo(map);
+          marker.bindTooltip(
+            `<div class="glo-tip"><div class="glo-tip-corner">${esc(s.name)}</div>
+             <div class="glo-tip-meta">${esc(s.city)} &middot; ${esc(s.venue_type)} &middot; from $${fromPrice(s.daily_price_usd)}/day &middot; tap to select</div></div>`,
+            { direction: "top", offset: [0, -16], opacity: 1 }
+          );
+          marker.on("click", () => {
+            if (draw.current.mode) return; // ignore marker taps while drawing
+            onToggleRef.current(s.id);
+          });
+          markersRef.current.set(s.id, marker);
+        });
+        setShown(visible.length);
+        setCapped(inView.length > MARKER_CAP);
+      }
+
+      renderRef.current = render;
 
       if (screens.length) {
-        const bounds = L.latLngBounds(screens.map((s) => [s.lat, s.lng] as [number, number]));
-        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 });
+        map.fitBounds(L.latLngBounds(screens.map((s) => [s.lat, s.lng] as [number, number])), {
+          padding: [40, 40],
+          maxZoom: 13,
+        });
+      } else {
+        map.setView([39.5, -98.35], 4);
       }
+
+      map.on("moveend", render);
+      map.on("zoomend", render);
+      render();
 
       // ---- drawing handlers
       map.on("click", (e: import("leaflet").LeafletMouseEvent) => {
@@ -273,10 +358,27 @@ export default function BookMap({
         )}
       </div>
       <p className="text-[11px] text-ink-500 mt-1.5">
-        Tap screens one by one, or use Radius / Area to grab every screen in a zone at once.
+        {clustered
+          ? `${shown.toLocaleString()} screen${shown === 1 ? "" : "s"} in view — tap a cluster or zoom in to pick individual screens.`
+          : capped
+            ? `Showing ${shown.toLocaleString()} of the screens in view — zoom in for the rest.`
+            : "Tap screens one by one, or use Radius / Area to grab every screen in a zone at once."}
       </p>
       <style jsx global>{`
         .glo-book-marker { background: transparent; border: none; }
+        .glo-cluster { background: transparent; border: none; }
+        .glo-cluster .bubble {
+          display: flex; align-items: center; justify-content: center;
+          border-radius: 9999px; cursor: pointer;
+          background: rgba(163, 230, 53, 0.18);
+          border: 1.5px solid rgba(163, 230, 53, 0.75);
+          color: #d9f99d; font-size: 12px; font-weight: 600;
+          box-shadow: 0 0 14px rgba(163, 230, 53, 0.35);
+        }
+        .glo-cluster .bubble:hover {
+          background: rgba(163, 230, 53, 0.3);
+          box-shadow: 0 0 20px rgba(163, 230, 53, 0.55);
+        }
         .glo-book-marker .dot {
           position: absolute; inset: 0; margin: auto;
           width: 14px; height: 14px; border-radius: 9999px;
@@ -343,6 +445,18 @@ function pointInPolygon(p: [number, number], poly: [number, number][]): boolean 
     if (intersect) inside = !inside;
   }
   return inside;
+}
+
+/** Aggregated bubble: size scales with count, number rendered inside. */
+function clusterIcon(L: typeof import("leaflet"), n: number) {
+  const size = n >= 500 ? 52 : n >= 100 ? 44 : n >= 25 ? 38 : 32;
+  const label = n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  return L.divIcon({
+    className: "glo-cluster",
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    html: `<span class="bubble" style="width:${size}px;height:${size}px">${label}</span>`,
+  });
 }
 
 function iconFor(L: typeof import("leaflet"), isSelected: boolean) {

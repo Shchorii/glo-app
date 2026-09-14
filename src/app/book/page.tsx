@@ -38,6 +38,7 @@ export default function BookPage() {
   const [view, setView] = useState<"list" | "map">("map");
   const [city, setCity] = useState<string>("all");
   const [venue, setVenue] = useState<string>("all");
+  const [listLimit, setListLimit] = useState(60);
 
   const today = new Date().toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(today);
@@ -117,6 +118,12 @@ export default function BookPage() {
     [screens, city, venue]
   );
   const selectedScreens = useMemo(() => (screens ?? []).filter((s) => selected.has(s.id)), [screens, selected]);
+
+  /** The chip row under the map: what you picked, not the whole national inventory. */
+  const chipScreens = useMemo(() => {
+    if (selectedScreens.length) return selectedScreens.slice(0, 60);
+    return filtered.slice(0, 12);
+  }, [selectedScreens, filtered]);
   const perDay = selectedScreens.reduce((sum, s) => sum + s.daily_price_usd, 0);
   const days = daysBetween(startDate, endDate);
   const dpMult = daypartMultiplier(dayparts);
@@ -264,7 +271,7 @@ export default function BookPage() {
               <BookMap screens={filtered} selected={selected} onToggle={toggle} />
               <p className="text-[11px] text-ink-500 mt-2">Tap a dot to select a screen. Selected screens glow cyan.</p>
               <div className="flex flex-wrap gap-2 mt-3">
-                {filtered.map((s) => {
+                {chipScreens.map((s) => {
                   const isSel = selected.has(s.id);
                   return (
                     <button
@@ -289,7 +296,7 @@ export default function BookPage() {
 
           {screens && view === "list" && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {filtered.map((s) => {
+              {filtered.slice(0, listLimit).map((s) => {
                 const isSel = selected.has(s.id);
                 return (
                   <button
@@ -320,6 +327,20 @@ export default function BookPage() {
                 );
               })}
               {filtered.length === 0 && <p className="text-sm text-ink-500 col-span-full py-8 text-center">No screens match those filters.</p>}
+              {filtered.length > listLimit && (
+                <div className="col-span-full flex flex-col items-center gap-2 py-4">
+                  <p className="text-[12px] text-ink-500">
+                    Showing {Math.min(listLimit, filtered.length).toLocaleString()} of {filtered.length.toLocaleString()} screens
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setListLimit((n) => n + 120)}
+                    className="px-3 py-1.5 rounded-md text-[12px] font-medium border border-line-800 text-ink-300 hover:text-ink-50 hover:border-line-600 transition-colors"
+                  >
+                    Load more
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
