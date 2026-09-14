@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  listScreens, createCampaign, uploadCreative, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
+  listScreens, listScreensNear, createCampaign, uploadCreative, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
   type Screen, type Creative,
 } from "@/lib/db";
 import { creativeAttachError } from "@/lib/moderation";
@@ -18,9 +18,14 @@ import {
   ChevronLeft, ChevronRight, Loader2, CheckCircle2, Upload, Search, X,
 } from "lucide-react";
 import { searchScreens } from "@/lib/screen-search";
+import { ZIP_CENTROIDS } from "@/lib/zip-centroids";
 
 const STEPS = ["Screens", "Dates", "Creative", "Review"] as const;
 const MAX_UPLOAD_MB = 50;
+/** How far around the advertiser we load inventory. Local, not national. */
+const RADIUS_M = 25000;
+/** Used when geolocation is denied or unavailable. */
+const FALLBACK = { lat: 40.7128, lng: -74.006, label: "New York" };
 
 type CreativeChoice =
   | { kind: "none" }
@@ -41,6 +46,7 @@ export default function BookPage() {
   const [venue, setVenue] = useState<string>("all");
   const [listLimit, setListLimit] = useState(60);
   const [query, setQuery] = useState("");
+  const [origin, setOrigin] = useState<{ lat: number; lng: number; label: string } | null>(null);
 
   const today = new Date().toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(today);
@@ -68,10 +74,29 @@ export default function BookPage() {
     }
   }, [loading, user, router]);
 
-  // Load screens
+  // Load screens near the advertiser. Glo is local: we fetch a radius, not a country.
   useEffect(() => {
     if (!isSupabaseConfigured) return;
-    listScreens().then(setScreens).catch((e) => setLoadErr(String(e?.message ?? e)));
+    let done = false;
+
+    function load(lat: number, lng: number, label: string) {
+      if (done) return;
+      done = true;
+      setOrigin({ lat, lng, label });
+      listScreensNear(lat, lng, RADIUS_M).then(setScreens).catch((e) => setLoadErr(String(e?.message ?? e)));
+    }
+
+    if (typeof navigator !== "undefined" && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => load(pos.coords.latitude, pos.coords.longitude, "your location"),
+        () => load(FALLBACK.lat, FALLBACK.lng, FALLBACK.label),
+        { timeout: 6000, maximumAge: 300000 }
+      );
+      // Don't let a silent permission prompt stall the page.
+      setTimeout(() => load(FALLBACK.lat, FALLBACK.lng, FALLBACK.label), 6500);
+    } else {
+      load(FALLBACK.lat, FALLBACK.lng, FALLBACK.label);
+    }
   }, []);
 
   // Load the library the first time the picker opens
@@ -124,6 +149,28 @@ export default function BookPage() {
   const hit = useMemo(() => searchScreens(query, baseFiltered), [query, baseFiltered]);
   const noMatch = query.trim().length > 0 && hit === null;
   const filtered = hit ? hit.screens : baseFiltered;
+
+  /**
+   * A ZIP can resolve outside the radius we loaded. Rather than showing "no
+   * inventory" for a place that has plenty, fetch around that ZIP instead.
+   */
+  useEffect(() => {
+    const q = query.trim();
+    if (!/^\d{5}$/.test(q)) return;
+    const c = ZIP_CENTROIDS[q];
+    if (!c || !origin) return;
+    const far = Math.hypot((c[0] - origin.lat) * 111, (c[1] - origin.lng) * 85) * 1000 > RADIUS_M * 0.8;
+    if (!far) return;
+    let cancelled = false;
+    listScreensNear(c[0], c[1], RADIUS_M)
+      .then((rows) => {
+        if (cancelled) return;
+        setOrigin({ lat: c[0], lng: c[1], label: q });
+        setScreens(rows);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [query, origin]);
   const selectedScreens = useMemo(() => (screens ?? []).filter((s) => selected.has(s.id)), [screens, selected]);
 
   /** The chip row under the map: what you picked, not the whole national inventory. */
@@ -291,6 +338,12 @@ export default function BookPage() {
           {loadErr && <p className="text-sm text-red-400 mb-3">{loadErr}</p>}
           {!screens && !loadErr && (
             <div className="flex items-center gap-2 text-ink-400 text-sm py-10 justify-center"><Loader2 size={15} className="animate-spin" /> Loading screens…</div>
+          )}
+
+          {screens && origin && !query && (
+            <p className="text-[12px] text-ink-400 mb-3">
+              {screens.length.toLocaleString()} screens within {Math.round(RADIUS_M / 1000)}km of {origin.label}
+            </p>
           )}
 
           {noMatch && (

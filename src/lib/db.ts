@@ -71,6 +71,26 @@ function sb() {
   return c;
 }
 
+/**
+ * Local-first fetch: screens within reach of a point, nearest first.
+ * Glo sells local advertising, so we never load national inventory into the browser.
+ */
+export async function listScreensNear(
+  lat: number,
+  lng: number,
+  radiusM = 25000,
+  limit = 3000
+): Promise<Screen[]> {
+  const { data, error } = await sb().rpc("screens_near", {
+    p_lat: lat,
+    p_lng: lng,
+    p_radius_m: radiusM,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return (data ?? []).map((s: Screen) => ({ ...s, daily_price_usd: Number(s.daily_price_usd) })) as Screen[];
+}
+
 export async function listScreens(): Promise<Screen[]> {
   const { data, error } = await sb()
     .from("screens")
