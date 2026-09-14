@@ -15,8 +15,9 @@ import { DAYPARTS, daypartMultiplier, daypartSummary, fromPrice } from "@/lib/da
 import { TemplateBuilder, renderTemplatePng, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
 import {
   MapPin, List, Map as MapIcon, Monitor, Calendar, ImagePlus, Wand2, FolderOpen,
-  ChevronLeft, ChevronRight, Loader2, CheckCircle2, Upload,
+  ChevronLeft, ChevronRight, Loader2, CheckCircle2, Upload, Search, X,
 } from "lucide-react";
+import { searchScreens } from "@/lib/screen-search";
 
 const STEPS = ["Screens", "Dates", "Creative", "Review"] as const;
 const MAX_UPLOAD_MB = 50;
@@ -39,6 +40,7 @@ export default function BookPage() {
   const [city, setCity] = useState<string>("all");
   const [venue, setVenue] = useState<string>("all");
   const [listLimit, setListLimit] = useState(60);
+  const [query, setQuery] = useState("");
 
   const today = new Date().toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(today);
@@ -113,10 +115,15 @@ export default function BookPage() {
 
   const cities = useMemo(() => Array.from(new Set((screens ?? []).map((s) => s.city))), [screens]);
   const venues = useMemo(() => Array.from(new Set((screens ?? []).map((s) => s.venue_type))), [screens]);
-  const filtered = useMemo(
+  const baseFiltered = useMemo(
     () => (screens ?? []).filter((s) => (city === "all" || s.city === city) && (venue === "all" || s.venue_type === venue)),
     [screens, city, venue]
   );
+
+  /** Free-text search: 5-digit ZIP, neighborhood, or city. Narrows on top of the dropdowns. */
+  const hit = useMemo(() => searchScreens(query, baseFiltered), [query, baseFiltered]);
+  const noMatch = query.trim().length > 0 && hit === null;
+  const filtered = hit ? hit.screens : baseFiltered;
   const selectedScreens = useMemo(() => (screens ?? []).filter((s) => selected.has(s.id)), [screens, selected]);
 
   /** The chip row under the map: what you picked, not the whole national inventory. */
@@ -245,7 +252,27 @@ export default function BookPage() {
       {step === 0 && (
         <div>
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 items-center">
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-500 pointer-events-none" />
+                <input
+                  value={query}
+                  onChange={(e) => { setQuery(e.target.value); setListLimit(60); }}
+                  placeholder="ZIP, neighborhood or city"
+                  aria-label="Search screens by ZIP code, neighborhood or city"
+                  className="w-[230px] pl-8 pr-7 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100 placeholder:text-ink-600 focus:outline-none focus:border-cy-400/50"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery("")}
+                    aria-label="Clear search"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-500 hover:text-ink-200"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
               <select value={city} onChange={(e) => setCity(e.target.value)} className="px-3 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100">
                 <option value="all">All cities</option>
                 {cities.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -266,9 +293,22 @@ export default function BookPage() {
             <div className="flex items-center gap-2 text-ink-400 text-sm py-10 justify-center"><Loader2 size={15} className="animate-spin" /> Loading screens…</div>
           )}
 
+          {noMatch && (
+            <p className="text-[12px] text-amber-400/90 mb-3">
+              Nothing found for &ldquo;{query.trim()}&rdquo;. Try a 5-digit ZIP, a neighborhood, or a city.
+            </p>
+          )}
+          {hit && (
+            <p className="text-[12px] text-ink-400 mb-3">
+              {hit.screens.length.toLocaleString()} screen{hit.screens.length === 1 ? "" : "s"}{" "}
+              {hit.kind === "zip" ? `near ${hit.label}` : `in ${hit.label}`}
+              {hit.screens.length === 0 && " — no inventory there yet"}
+            </p>
+          )}
+
           {screens && view === "map" && (
             <div>
-              <BookMap screens={filtered} selected={selected} onToggle={toggle} />
+              <BookMap screens={filtered} selected={selected} onToggle={toggle} focus={hit?.center ?? null} />
               <p className="text-[11px] text-ink-500 mt-2">Tap a dot to select a screen. Selected screens glow cyan.</p>
               <div className="flex flex-wrap gap-2 mt-3">
                 {chipScreens.map((s) => {

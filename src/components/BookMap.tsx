@@ -28,10 +28,13 @@ export default function BookMap({
   screens,
   selected,
   onToggle,
+  focus = null,
 }: {
   screens: Screen[];
   selected: Set<string>;
   onToggle: (id: string) => void;
+  /** When a search resolves, fly here. */
+  focus?: [number, number] | null;
 }) {
   const elRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("leaflet").Map | null>(null);
@@ -311,6 +314,15 @@ export default function BookMap({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screens]);
+
+  // Fly to a search hit. Zoom past CLUSTER_ZOOM so individual screens are pickable.
+  useEffect(() => {
+    if (!focus || !mapRef.current) return;
+    mapRef.current.setView(focus, Math.max(mapRef.current.getZoom(), CLUSTER_ZOOM + 2), {
+      animate: true,
+    });
+    renderRef.current?.();
+  }, [focus]);
 
   // Reflect selection changes on markers
   useEffect(() => {

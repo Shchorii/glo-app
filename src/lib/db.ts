@@ -16,6 +16,10 @@ export type Screen = {
   height_px: number;
   max_duration_s: number;
   is_available: boolean;
+  /** Added with the national inventory; older rows may not have these. */
+  neighborhood?: string | null;
+  dma?: string | null;
+  source?: "demo" | "live";
 };
 
 export type CampaignStatus =
