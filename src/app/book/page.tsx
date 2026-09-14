@@ -48,6 +48,8 @@ export default function BookPage() {
   const [query, setQuery] = useState("");
   const [origin, setOrigin] = useState<{ lat: number; lng: number; label: string } | null>(null);
   const [totalNear, setTotalNear] = useState<number | null>(null);
+  /** Set when the advertiser's own location had no inventory and we fell back. */
+  const [awayFrom, setAwayFrom] = useState<string | null>(null);
 
   const today = new Date().toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(today);
@@ -84,8 +86,20 @@ export default function BookPage() {
       if (done) return;
       done = true;
       setOrigin({ lat, lng, label });
-      listScreensNear(lat, lng, RADIUS_M).then(setScreens).catch((e) => setLoadErr(String(e?.message ?? e)));
-      countScreensNear(lat, lng, RADIUS_M).then(setTotalNear).catch(() => setTotalNear(null));
+      listScreensNear(lat, lng, RADIUS_M)
+        .then((rows) => {
+          // Glo has no inventory everywhere yet. An empty map is a dead end, so
+          // fall back to a city that does have screens and say so plainly.
+          if (rows.length === 0 && (lat !== FALLBACK.lat || lng !== FALLBACK.lng)) {
+            setAwayFrom(label);
+            setOrigin({ lat: FALLBACK.lat, lng: FALLBACK.lng, label: FALLBACK.label });
+            countScreensNear(FALLBACK.lat, FALLBACK.lng, RADIUS_M).then(setTotalNear).catch(() => setTotalNear(null));
+            return listScreensNear(FALLBACK.lat, FALLBACK.lng, RADIUS_M).then(setScreens);
+          }
+          setScreens(rows);
+          countScreensNear(lat, lng, RADIUS_M).then(setTotalNear).catch(() => setTotalNear(null));
+        })
+        .catch((e) => setLoadErr(String(e?.message ?? e)));
     }
 
     if (typeof navigator !== "undefined" && navigator.geolocation) {
@@ -273,7 +287,7 @@ export default function BookPage() {
   }
 
   return (
-    <Shell demo={!!screens?.length && screens.every((s) => s.source === "demo")}>
+    <Shell demo={!screens?.some((s) => s.source === "live")}>
       {/* Stepper */}
       <div className="flex items-center gap-1.5 sm:gap-3 mb-6 overflow-x-auto pb-1">
         {STEPS.map((label, i) => (
@@ -340,6 +354,12 @@ export default function BookPage() {
           {loadErr && <p className="text-sm text-red-400 mb-3">{loadErr}</p>}
           {!screens && !loadErr && (
             <div className="flex items-center gap-2 text-ink-400 text-sm py-10 justify-center"><Loader2 size={15} className="animate-spin" /> Loading screens…</div>
+          )}
+
+          {awayFrom && !query && (
+            <p className="text-[12px] text-amber-400/90 mb-3">
+              No Glo screens near {awayFrom} yet — showing {FALLBACK.label}. Search a ZIP, neighborhood or city to look elsewhere.
+            </p>
           )}
 
           {screens && origin && !query && (

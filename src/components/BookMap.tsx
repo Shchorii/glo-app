@@ -9,6 +9,8 @@ type DrawMode = null | "circle" | "poly";
 
 /** Below this zoom we show aggregated bubbles instead of individual screens. */
 const CLUSTER_ZOOM = 11;
+/** Above this many screens in view, cluster regardless of zoom — dots become unreadable. */
+const DENSITY_CAP = 120;
 /** Hard ceiling on DOM markers, whatever the viewport holds. */
 const MARKER_CAP = 500;
 
@@ -155,7 +157,11 @@ export default function BookMap({
 
         const inView = screensRef.current.filter((s) => b.contains([s.lat, s.lng]));
 
-        if (zoom < CLUSTER_ZOOM) {
+        // Cluster when zoomed out OR when the viewport is too dense to read.
+        // Dense local inventory turns individual dots into an unreadable blob.
+        const shouldCluster = zoom < CLUSTER_ZOOM || inView.length > DENSITY_CAP;
+
+        if (shouldCluster) {
           markersRef.current.forEach((m) => map.removeLayer(m));
           markersRef.current.clear();
 
@@ -371,7 +377,7 @@ export default function BookMap({
       </div>
       <p className="text-[11px] text-ink-500 mt-1.5">
         {clustered
-          ? `${shown.toLocaleString()} screen${shown === 1 ? "" : "s"} in view — tap a cluster or zoom in to pick individual screens.`
+          ? `${shown.toLocaleString()} screen${shown === 1 ? "" : "s"} in view — tap a cluster to zoom in, or use Radius / Area to grab a whole zone at once.`
           : capped
             ? `Showing ${shown.toLocaleString()} of the screens in view — zoom in for the rest.`
             : "Tap screens one by one, or use Radius / Area to grab every screen in a zone at once."}
