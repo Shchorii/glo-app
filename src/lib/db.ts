@@ -91,6 +91,17 @@ export async function listScreensNear(
   return (data ?? []).map((s: Screen) => ({ ...s, daily_price_usd: Number(s.daily_price_usd) })) as Screen[];
 }
 
+/** True count in a radius. PostgREST caps fetched rows at 1000, so the count must come separately. */
+export async function countScreensNear(lat: number, lng: number, radiusM = 5000): Promise<number> {
+  const { data, error } = await sb().rpc("screens_near_count", {
+    p_lat: lat,
+    p_lng: lng,
+    p_radius_m: radiusM,
+  });
+  if (error) throw error;
+  return Number(data ?? 0);
+}
+
 export async function listScreens(): Promise<Screen[]> {
   const { data, error } = await sb()
     .from("screens")

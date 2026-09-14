@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  listScreens, listScreensNear, createCampaign, uploadCreative, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
+  listScreens, listScreensNear, countScreensNear, createCampaign, uploadCreative, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
   type Screen, type Creative,
 } from "@/lib/db";
 import { creativeAttachError } from "@/lib/moderation";
@@ -23,7 +23,7 @@ import { ZIP_CENTROIDS } from "@/lib/zip-centroids";
 const STEPS = ["Screens", "Dates", "Creative", "Review"] as const;
 const MAX_UPLOAD_MB = 50;
 /** How far around the advertiser we load inventory. Local, not national. */
-const RADIUS_M = 25000;
+const RADIUS_M = 5000;
 /** Used when geolocation is denied or unavailable. */
 const FALLBACK = { lat: 40.7128, lng: -74.006, label: "New York" };
 
@@ -47,6 +47,7 @@ export default function BookPage() {
   const [listLimit, setListLimit] = useState(60);
   const [query, setQuery] = useState("");
   const [origin, setOrigin] = useState<{ lat: number; lng: number; label: string } | null>(null);
+  const [totalNear, setTotalNear] = useState<number | null>(null);
 
   const today = new Date().toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(today);
@@ -84,6 +85,7 @@ export default function BookPage() {
       done = true;
       setOrigin({ lat, lng, label });
       listScreensNear(lat, lng, RADIUS_M).then(setScreens).catch((e) => setLoadErr(String(e?.message ?? e)));
+      countScreensNear(lat, lng, RADIUS_M).then(setTotalNear).catch(() => setTotalNear(null));
     }
 
     if (typeof navigator !== "undefined" && navigator.geolocation) {
@@ -271,7 +273,7 @@ export default function BookPage() {
   }
 
   return (
-    <Shell>
+    <Shell demo={!!screens?.length && screens.every((s) => s.source === "demo")}>
       {/* Stepper */}
       <div className="flex items-center gap-1.5 sm:gap-3 mb-6 overflow-x-auto pb-1">
         {STEPS.map((label, i) => (
@@ -342,7 +344,9 @@ export default function BookPage() {
 
           {screens && origin && !query && (
             <p className="text-[12px] text-ink-400 mb-3">
-              {screens.length.toLocaleString()} screens within {Math.round(RADIUS_M / 1000)}km of {origin.label}
+              {totalNear !== null && totalNear > screens.length
+                ? `Nearest ${screens.length.toLocaleString()} of ${totalNear.toLocaleString()} screens within ${Math.round(RADIUS_M / 1000)}km of ${origin.label}`
+                : `${screens.length.toLocaleString()} screens within ${Math.round(RADIUS_M / 1000)}km of ${origin.label}`}
             </p>
           )}
 
@@ -653,11 +657,11 @@ export default function BookPage() {
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, demo = false }: { children: React.ReactNode; demo?: boolean }) {
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-10">
       <div className="mb-6">
-        <p className="chip mb-3">Book · live inventory</p>
+        <p className="chip mb-3">{demo ? "Book · demo inventory" : "Book · live inventory"}</p>
         <h1 className="text-2xl md:text-3xl font-semibold text-ink-50 tracking-tight">Book screens</h1>
         <p className="text-ink-400 mt-1.5 text-sm">Pick screens, pick dates, attach a creative. Sixty seconds to the street.</p>
       </div>
