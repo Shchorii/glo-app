@@ -1,24 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  listScreens, listScreensNear, countScreensNear, createCampaign, uploadCreative, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
+  countScreensNear, createCampaign, uploadCreative, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
   type Screen, type Creative,
 } from "@/lib/db";
 import { creativeAttachError } from "@/lib/moderation";
 import { useSession } from "@/lib/auth-client";
 import { isSupabaseConfigured } from "@/lib/supabase";
-import BookMap from "@/components/BookMap";
+import BookMap, { type MapFocus, type Viewport } from "@/components/BookMap";
 import { DAYPARTS, daypartMultiplier, daypartSummary, fromPrice } from "@/lib/dayparts";
 import { TemplateBuilder, renderTemplatePng, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
 import {
   MapPin, List, Map as MapIcon, Monitor, Calendar, ImagePlus, Wand2, FolderOpen,
   ChevronLeft, ChevronRight, Loader2, CheckCircle2, Upload, Search, X,
 } from "lucide-react";
-import { searchScreens } from "@/lib/screen-search";
 import { ZIP_CENTROIDS } from "@/lib/zip-centroids";
+import {
+  bboxAround, fetchFilters, fetchList, screensByIds, searchPlace,
+  type AreaResult, type Bbox, type CityOption, type VenueOption,
+} from "@/lib/book-api";
 
 const STEPS = ["Screens", "Dates", "Creative", "Review"] as const;
 const MAX_UPLOAD_MB = 50;
@@ -26,6 +29,16 @@ const MAX_UPLOAD_MB = 50;
 const RADIUS_M = 5000;
 /** Used when geolocation is denied or unavailable. */
 const FALLBACK = { lat: 40.7128, lng: -74.006, label: "New York" };
+/** Map zoom that shows roughly RADIUS_M around the advertiser. */
+const LOCAL_ZOOM = 13;
+const LIST_PAGE = 60;
+
+type SearchHit = { kind: "zip" | "city" | "neighborhood"; label: string; n: number };
+
+function zoomForBounds(b: Bbox) {
+  const span = Math.max(b.maxLat - b.minLat, (b.maxLng - b.minLng) * 0.8, 0.005);
+  return Math.max(3, Math.min(15, Math.floor(Math.log2(360 / span))));
+}
 
 type CreativeChoice =
   | { kind: "none" }
@@ -38,18 +51,34 @@ export default function BookPage() {
   const { user, loading } = useSession();
 
   const [step, setStep] = useState(0);
-  const [screens, setScreens] = useState<Screen[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** id -> all-day price. Holds ids + an aggregate, never the full rows of a bulk selection. */
+  const [selected, setSelected] = useState<Map<string, number>>(new Map());
+  /** Details for screens we have seen (clicked, listed, chips). */
+  const [meta, setMeta] = useState<Map<string, Screen>>(new Map());
   const [view, setView] = useState<"list" | "map">("map");
-  const [city, setCity] = useState<string>("all");
-  const [venue, setVenue] = useState<string>("all");
-  const [listLimit, setListLimit] = useState(60);
+  const [city, setCity] = useState<string | null>(null);
+  const [venue, setVenue] = useState<string | null>(null);
+  const [cityOpts, setCityOpts] = useState<CityOption[]>([]);
+  const [venueOpts, setVenueOpts] = useState<VenueOption[]>([]);
   const [query, setQuery] = useState("");
+  const [hit, setHit] = useState<SearchHit | null>(null);
+  const [noMatch, setNoMatch] = useState(false);
   const [origin, setOrigin] = useState<{ lat: number; lng: number; label: string } | null>(null);
   const [totalNear, setTotalNear] = useState<number | null>(null);
   /** Set when the advertiser's own location had no inventory and we fell back. */
   const [awayFrom, setAwayFrom] = useState<string | null>(null);
+  const [viewport, setViewport] = useState<Viewport | null>(null);
+  /** Area the List view shows: the map viewport, or wherever a search pointed. */
+  const [area, setArea] = useState<Bbox | null>(null);
+  const [focus, setFocus] = useState<MapFocus | null>(null);
+  const lastView = useRef<{ center: [number, number]; zoom: number } | null>(null);
+  const focusKey = useRef(0);
+  const [listPage, setListPage] = useState(0);
+  const [list, setList] = useState<{ total: number; rows: Screen[] } | null>(null);
+  const [listLoading, setListLoading] = useState(false);
+  const [chips, setChips] = useState<Screen[]>([]);
+  const urlReady = useRef(false);
 
   const today = new Date().toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(today);
@@ -77,43 +106,189 @@ export default function BookPage() {
     }
   }, [loading, user, router]);
 
-  // Load screens near the advertiser. Glo is local: we fetch a radius, not a country.
+  // Filters, search and view come from the URL so a filtered view is shareable.
+  useEffect(() => {
+    const u = new URLSearchParams(window.location.search);
+    if (u.get("city")) setCity(u.get("city"));
+    if (u.get("venue")) setVenue(u.get("venue"));
+    if (u.get("q")) setQuery(u.get("q") ?? "");
+    if (u.get("view") === "list") setView("list");
+    urlReady.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!urlReady.current) return;
+    const u = new URLSearchParams(window.location.search);
+    const set = (k: string, v: string | null) => (v ? u.set(k, v) : u.delete(k));
+    set("city", city);
+    set("venue", venue);
+    set("q", query.trim() || null);
+    set("view", view === "list" ? "list" : null);
+    const qs = u.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+  }, [city, venue, query, view]);
+
+  // Where to start: the advertiser's location. Glo is local.
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     let done = false;
 
-    function load(lat: number, lng: number, label: string) {
+    function start(lat: number, lng: number, label: string) {
       if (done) return;
       done = true;
-      setOrigin({ lat, lng, label });
-      listScreensNear(lat, lng, RADIUS_M)
-        .then((rows) => {
-          // Glo has no inventory everywhere yet. An empty map is a dead end, so
-          // fall back to a city that does have screens and say so plainly.
-          if (rows.length === 0 && (lat !== FALLBACK.lat || lng !== FALLBACK.lng)) {
+      countScreensNear(lat, lng, RADIUS_M)
+        .then((n) => {
+          // An empty map is a dead end: fall back to a city that has screens and say so.
+          if (n === 0 && (lat !== FALLBACK.lat || lng !== FALLBACK.lng)) {
             setAwayFrom(label);
-            setOrigin({ lat: FALLBACK.lat, lng: FALLBACK.lng, label: FALLBACK.label });
-            countScreensNear(FALLBACK.lat, FALLBACK.lng, RADIUS_M).then(setTotalNear).catch(() => setTotalNear(null));
-            return listScreensNear(FALLBACK.lat, FALLBACK.lng, RADIUS_M).then(setScreens);
+            return countScreensNear(FALLBACK.lat, FALLBACK.lng, RADIUS_M).then((m) => {
+              setTotalNear(m);
+              setOrigin({ lat: FALLBACK.lat, lng: FALLBACK.lng, label: FALLBACK.label });
+            });
           }
-          setScreens(rows);
-          countScreensNear(lat, lng, RADIUS_M).then(setTotalNear).catch(() => setTotalNear(null));
+          setTotalNear(n);
+          setOrigin({ lat, lng, label });
         })
         .catch((e) => setLoadErr(String(e?.message ?? e)));
     }
 
     if (typeof navigator !== "undefined" && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => load(pos.coords.latitude, pos.coords.longitude, "your location"),
-        () => load(FALLBACK.lat, FALLBACK.lng, FALLBACK.label),
+        (pos) => start(pos.coords.latitude, pos.coords.longitude, "your location"),
+        () => start(FALLBACK.lat, FALLBACK.lng, FALLBACK.label),
         { timeout: 6000, maximumAge: 300000 }
       );
-      // Don't let a silent permission prompt stall the page.
-      setTimeout(() => load(FALLBACK.lat, FALLBACK.lng, FALLBACK.label), 6500);
+      setTimeout(() => start(FALLBACK.lat, FALLBACK.lng, FALLBACK.label), 6500);
     } else {
-      load(FALLBACK.lat, FALLBACK.lng, FALLBACK.label);
+      start(FALLBACK.lat, FALLBACK.lng, FALLBACK.label);
     }
   }, []);
+
+  useEffect(() => {
+    if (origin && !lastView.current) lastView.current = { center: [origin.lat, origin.lng], zoom: LOCAL_ZOOM };
+  }, [origin]);
+
+  // Filter options. Venues cascade from the chosen city.
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    let cancelled = false;
+    fetchFilters(city)
+      .then((f) => {
+        if (cancelled) return;
+        setCityOpts(f.cities);
+        setVenueOpts(f.venues);
+        if (venue && !f.venues.some((v) => v.venue_type === venue)) setVenue(null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [city]);
+
+  function pointMap(next: { center: [number, number]; zoom: number } | { bounds: Bbox }) {
+    focusKey.current += 1;
+    if ("bounds" in next) {
+      const b = next.bounds;
+      setFocus({ key: focusKey.current, bounds: b });
+      setArea(b);
+      lastView.current = { center: [(b.minLat + b.maxLat) / 2, (b.minLng + b.maxLng) / 2], zoom: zoomForBounds(b) };
+    } else {
+      setFocus({ key: focusKey.current, center: next.center, zoom: next.zoom });
+      setArea(bboxAround(next.center[0], next.center[1], 2500));
+      lastView.current = { center: next.center, zoom: next.zoom };
+    }
+    setListPage(0);
+  }
+
+  function chooseCity(next: string | null) {
+    setCity(next);
+    setListPage(0);
+    const c = cityOpts.find((o) => o.city === next);
+    if (c) pointMap({ bounds: { minLat: c.min_lat, minLng: c.min_lng, maxLat: c.max_lat, maxLng: c.max_lng } });
+  }
+
+  // A city arriving from the URL: fly there once options are known.
+  const flewToUrlCity = useRef(false);
+  useEffect(() => {
+    if (flewToUrlCity.current || !city || !cityOpts.length || !origin) return;
+    flewToUrlCity.current = true;
+    const c = cityOpts.find((o) => o.city === city);
+    if (c) pointMap({ bounds: { minLat: c.min_lat, minLng: c.min_lng, maxLat: c.max_lat, maxLng: c.max_lng } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [city, cityOpts, origin]);
+
+  // Free-text search: 5-digit ZIP, neighborhood or city. Resolved server-side.
+  useEffect(() => {
+    const q = query.trim();
+    setNoMatch(false);
+    if (!q) { setHit(null); return; }
+    if (!origin) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        if (/^\d{5}$/.test(q)) {
+          const c = ZIP_CENTROIDS[q];
+          if (!c) { if (!cancelled) { setHit(null); setNoMatch(true); } return; }
+          pointMap({ center: [c[0], c[1]], zoom: 14 });
+          const n = await countScreensNear(c[0], c[1], 2500);
+          if (!cancelled) setHit({ kind: "zip", label: q, n });
+          return;
+        }
+        if (q.length < 2) return;
+        const p = await searchPlace(q);
+        if (cancelled) return;
+        if (!p) { setHit(null); setNoMatch(true); return; }
+        pointMap({ bounds: { minLat: p.min_lat, minLng: p.min_lng, maxLat: p.max_lat, maxLng: p.max_lng } });
+        setHit({ kind: p.kind, label: p.label, n: p.n });
+      } catch {
+        if (!cancelled) { setHit(null); setNoMatch(true); }
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, origin]);
+
+  const listArea: Bbox | null = area ?? (origin ? bboxAround(origin.lat, origin.lng, RADIUS_M) : null);
+  const filters = useMemo(() => ({ city, venue }), [city, venue]);
+
+  // List view: one page of the current area at a time, same filters as the map.
+  useEffect(() => {
+    if (view !== "list" || !listArea) return;
+    const ctrl = new AbortController();
+    setListLoading(true);
+    fetchList(listArea, filters, listPage * LIST_PAGE, LIST_PAGE, ctrl.signal)
+      .then((r) => { setList(r); remember(r.rows); })
+      .catch(() => {})
+      .finally(() => { if (!ctrl.signal.aborted) setListLoading(false); });
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, listArea?.minLat, listArea?.minLng, listArea?.maxLat, listArea?.maxLng, filters, listPage]);
+
+  // Suggestion chips under the map: the cheapest screens in view.
+  useEffect(() => {
+    if (view !== "map" || !viewport) return;
+    const ctrl = new AbortController();
+    fetchList(viewport.bbox, filters, 0, 12, ctrl.signal)
+      .then((r) => { setChips(r.rows); remember(r.rows); })
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [view, viewport, filters]);
+
+  function remember(rows: Screen[]) {
+    if (!rows.length) return;
+    setMeta((prev) => {
+      const next = new Map(prev);
+      rows.forEach((r) => next.set(r.id, r));
+      return next;
+    });
+  }
+
+  // Names for a small selection that came from a zone (we only hold ids + prices).
+  useEffect(() => {
+    if (selected.size === 0 || selected.size > 12) return;
+    const missing = [...selected.keys()].filter((id) => !meta.has(id));
+    if (!missing.length) return;
+    screensByIds(missing).then(remember).catch(() => {});
+  }, [selected, meta]);
 
   // Load the library the first time the picker opens
   useEffect(() => {
@@ -154,59 +329,42 @@ export default function BookPage() {
     };
   }, [step, creative, tplSpec]);
 
-  const cities = useMemo(() => Array.from(new Set((screens ?? []).map((s) => s.city))), [screens]);
-  const venues = useMemo(() => Array.from(new Set((screens ?? []).map((s) => s.venue_type))), [screens]);
-  const baseFiltered = useMemo(
-    () => (screens ?? []).filter((s) => (city === "all" || s.city === city) && (venue === "all" || s.venue_type === venue)),
-    [screens, city, venue]
-  );
-
-  /** Free-text search: 5-digit ZIP, neighborhood, or city. Narrows on top of the dropdowns. */
-  const hit = useMemo(() => searchScreens(query, baseFiltered), [query, baseFiltered]);
-  const noMatch = query.trim().length > 0 && hit === null;
-  const filtered = hit ? hit.screens : baseFiltered;
-
-  /**
-   * A ZIP can resolve outside the radius we loaded. Rather than showing "no
-   * inventory" for a place that has plenty, fetch around that ZIP instead.
-   */
-  useEffect(() => {
-    const q = query.trim();
-    if (!/^\d{5}$/.test(q)) return;
-    const c = ZIP_CENTROIDS[q];
-    if (!c || !origin) return;
-    const far = Math.hypot((c[0] - origin.lat) * 111, (c[1] - origin.lng) * 85) * 1000 > RADIUS_M * 0.8;
-    if (!far) return;
-    let cancelled = false;
-    listScreensNear(c[0], c[1], RADIUS_M)
-      .then((rows) => {
-        if (cancelled) return;
-        setOrigin({ lat: c[0], lng: c[1], label: q });
-        setScreens(rows);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [query, origin]);
-  const selectedScreens = useMemo(() => (screens ?? []).filter((s) => selected.has(s.id)), [screens, selected]);
-
-  /** The chip row under the map: what you picked, not the whole national inventory. */
-  const chipScreens = useMemo(() => {
-    if (selectedScreens.length) return selectedScreens.slice(0, 60);
-    return filtered.slice(0, 12);
-  }, [selectedScreens, filtered]);
-  const perDay = selectedScreens.reduce((sum, s) => sum + s.daily_price_usd, 0);
+  const selectedIds = useMemo(() => [...selected.keys()], [selected]);
+  const perDay = useMemo(() => Math.round([...selected.values()].reduce((a, p) => a + p, 0) * 100) / 100, [selected]);
   const days = daysBetween(startDate, endDate);
   const dpMult = daypartMultiplier(dayparts);
   const total = Math.round(perDay * dpMult * days * 100) / 100;
+  const chipScreens = selected.size
+    ? selectedIds.slice(0, 12).map((id) => meta.get(id)).filter(Boolean) as Screen[]
+    : chips;
+  const citiesByState = useMemo(() => {
+    const groups = new Map<string, CityOption[]>();
+    cityOpts.forEach((c) => {
+      const k = c.state || "Other";
+      groups.set(k, [...(groups.get(k) ?? []), c]);
+    });
+    return [...groups.entries()];
+  }, [cityOpts]);
 
   function toggleDaypart(id: string) {
     setDayparts((prev) => (prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id]));
   }
 
-  function toggle(id: string) {
+  function toggle(s: Screen) {
     setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      const next = new Map(prev);
+      if (next.has(s.id)) next.delete(s.id); else next.set(s.id, s.daily_price_usd);
+      return next;
+    });
+    remember([s]);
+  }
+
+  /** Union-add a server-side zone selection. */
+  function addMany(r: AreaResult) {
+    if (!r.ids.length) return;
+    setSelected((prev) => {
+      const next = new Map(prev);
+      r.ids.forEach((id, i) => next.set(id, r.prices[i]));
       return next;
     });
   }
@@ -241,10 +399,10 @@ export default function BookPage() {
         if (blocked) throw new Error(blocked);
       }
       const id = await createCampaign({
-        name: name.trim() || `${selectedScreens[0]?.city ?? "Glo"} campaign`,
+        name: name.trim() || `${meta.get(selectedIds[0])?.city ?? city ?? "Glo"} campaign`,
         start_date: startDate,
         end_date: endDate,
-        screen_ids: [...selected],
+        screen_ids: selectedIds,
         creative_id: cr?.id ?? null,
         total_usd: total,
         dayparts,
@@ -287,7 +445,7 @@ export default function BookPage() {
   }
 
   return (
-    <Shell demo={!screens?.some((s) => s.source === "live")}>
+    <Shell demo={!viewport?.live}>
       {/* Stepper */}
       <div className="flex items-center gap-1.5 sm:gap-3 mb-6 overflow-x-auto pb-1">
         {STEPS.map((label, i) => (
@@ -320,7 +478,7 @@ export default function BookPage() {
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-500 pointer-events-none" />
                 <input
                   value={query}
-                  onChange={(e) => { setQuery(e.target.value); setListLimit(60); }}
+                  onChange={(e) => setQuery(e.target.value)}
                   placeholder="ZIP, neighborhood or city"
                   aria-label="Search screens by ZIP code, neighborhood or city"
                   className="w-[230px] pl-8 pr-7 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100 placeholder:text-ink-600 focus:outline-none focus:border-cy-400/50"
@@ -336,37 +494,58 @@ export default function BookPage() {
                   </button>
                 )}
               </div>
-              <select value={city} onChange={(e) => setCity(e.target.value)} className="px-3 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100">
+              <select
+                value={city ?? "all"}
+                onChange={(e) => chooseCity(e.target.value === "all" ? null : e.target.value)}
+                aria-label="Filter by city"
+                className="px-3 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100"
+              >
                 <option value="all">All cities</option>
-                {cities.map((c) => <option key={c} value={c}>{c}</option>)}
+                {citiesByState.map(([state, list]) => (
+                  <optgroup key={state} label={state}>
+                    {list.map((c) => <option key={c.city} value={c.city}>{c.city} ({c.n.toLocaleString()})</option>)}
+                  </optgroup>
+                ))}
               </select>
-              <select value={venue} onChange={(e) => setVenue(e.target.value)} className="px-3 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100 capitalize">
+              <select
+                value={venue ?? "all"}
+                onChange={(e) => { setVenue(e.target.value === "all" ? null : e.target.value); setListPage(0); }}
+                aria-label="Filter by venue type"
+                className="px-3 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100 capitalize"
+              >
                 <option value="all">All venues</option>
-                {venues.map((v) => <option key={v} value={v} className="capitalize">{v}</option>)}
+                {venueOpts.map((v) => <option key={v.venue_type} value={v.venue_type} className="capitalize">{v.venue_type} ({v.n.toLocaleString()})</option>)}
               </select>
+              {(city || venue) && (
+                <button
+                  type="button"
+                  onClick={() => { setCity(null); setVenue(null); setListPage(0); }}
+                  className="text-[12px] text-ink-400 hover:text-ink-100 underline underline-offset-2"
+                >
+                  Clear filters
+                </button>
+              )}
             </div>
             <div className="flex rounded-lg border border-line-800 overflow-hidden">
               <ToggleBtn active={view === "map"} onClick={() => setView("map")} icon={MapIcon} label="Map" />
-              <ToggleBtn active={view === "list"} onClick={() => setView("list")} icon={List} label="List" />
+              <ToggleBtn active={view === "list"} onClick={() => { setListPage(0); setView("list"); }} icon={List} label="List" />
             </div>
           </div>
 
           {loadErr && <p className="text-sm text-red-400 mb-3">{loadErr}</p>}
-          {!screens && !loadErr && (
+          {!origin && !loadErr && (
             <div className="flex items-center gap-2 text-ink-400 text-sm py-10 justify-center"><Loader2 size={15} className="animate-spin" /> Loading screens…</div>
           )}
 
           {awayFrom && !query && (
             <p className="text-[12px] text-amber-400/90 mb-3">
-              No Glo screens near {awayFrom} yet — showing {FALLBACK.label}. Search a ZIP, neighborhood or city to look elsewhere.
+              No Glo screens near {awayFrom} yet. Showing {FALLBACK.label}. Search a ZIP, neighborhood or city to look elsewhere.
             </p>
           )}
 
-          {screens && origin && !query && (
+          {origin && totalNear !== null && !query && !city && (
             <p className="text-[12px] text-ink-400 mb-3">
-              {totalNear !== null && totalNear > screens.length
-                ? `Nearest ${screens.length.toLocaleString()} of ${totalNear.toLocaleString()} screens within ${Math.round(RADIUS_M / 1000)}km of ${origin.label}`
-                : `${screens.length.toLocaleString()} screens within ${Math.round(RADIUS_M / 1000)}km of ${origin.label}`}
+              {totalNear.toLocaleString()} screens within {Math.round(RADIUS_M / 1000)}km of {origin.label}
             </p>
           )}
 
@@ -375,28 +554,35 @@ export default function BookPage() {
               Nothing found for &ldquo;{query.trim()}&rdquo;. Try a 5-digit ZIP, a neighborhood, or a city.
             </p>
           )}
-          {hit && (
+          {hit && query.trim() && (
             <p className="text-[12px] text-ink-400 mb-3">
-              {hit.screens.length.toLocaleString()} screen{hit.screens.length === 1 ? "" : "s"}{" "}
+              {hit.n.toLocaleString()} screen{hit.n === 1 ? "" : "s"}{" "}
               {hit.kind === "zip" ? `near ${hit.label}` : `in ${hit.label}`}
-              {hit.screens.length === 0 && " — no inventory there yet"}
+              {hit.n === 0 && " (no inventory there yet)"}
             </p>
           )}
 
-          {screens && view === "map" && (
+          {origin && view === "map" && (
             <div>
-              <BookMap screens={filtered} selected={selected} onToggle={toggle} focus={hit?.center ?? null} />
-              <p className="text-[11px] text-ink-500 mt-2">Tap a dot to select a screen. Selected screens glow cyan.</p>
-              {selectedScreens.length > 12 ? (
-                /* A bulk selection as 60 chips buries the Next button. Summarise instead. */
+              <BookMap
+                filters={filters}
+                selected={selected}
+                onToggle={toggle}
+                onSelectMany={addMany}
+                onViewport={(v) => { setViewport(v); setArea(v.bbox); lastView.current = { center: v.center, zoom: v.zoom }; }}
+                focus={focus}
+                initial={lastView.current ?? { center: [origin.lat, origin.lng], zoom: LOCAL_ZOOM }}
+              />
+              {selected.size > 12 ? (
+                /* A bulk selection as chips buries the Next button. Summarise instead. */
                 <div className="flex items-center justify-between gap-3 mt-3 px-3 py-2.5 rounded-lg bg-bg-900 border border-cy-400/30">
                   <span className="text-[13px] text-ink-100">
-                    {selectedScreens.length.toLocaleString()} screens selected
-                    <span className="text-ink-500"> · {fmtUsd(selectedScreens.reduce((a, s) => a + s.daily_price_usd, 0))}/day</span>
+                    {selected.size.toLocaleString()} screens selected
+                    <span className="text-ink-500"> · {fmtUsd(perDay)}/day</span>
                   </span>
                   <button
                     type="button"
-                    onClick={() => setSelected(new Set())}
+                    onClick={() => setSelected(new Map())}
                     className="text-[12px] text-ink-400 hover:text-ink-100 underline underline-offset-2 shrink-0"
                   >
                     Clear
@@ -410,7 +596,7 @@ export default function BookPage() {
                     <button
                       key={s.id}
                       type="button"
-                      onClick={() => toggle(s.id)}
+                      onClick={() => toggle(s)}
                       className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[12px] border transition-colors ${
                         isSel
                           ? "bg-cy-400/15 text-cy-300 border-cy-400/40"
@@ -428,50 +614,73 @@ export default function BookPage() {
             </div>
           )}
 
-          {screens && view === "list" && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {filtered.slice(0, listLimit).map((s) => {
-                const isSel = selected.has(s.id);
-                return (
+          {origin && view === "list" && (
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <p className="text-[12px] text-ink-400" data-testid="list-caption">
+                  {list === null
+                    ? "Loading screens…"
+                    : list.total === 0
+                      ? "No screens in this area with these filters."
+                      : `Showing ${(listPage * LIST_PAGE + 1).toLocaleString()}–${Math.min((listPage + 1) * LIST_PAGE, list.total).toLocaleString()} of ${list.total.toLocaleString()} screens in the current map area, cheapest first`}
+                  {listLoading && list !== null && <Loader2 size={12} className="inline ml-2 animate-spin" />}
+                </p>
+                {selected.size > 0 && (
+                  <span className="text-[12px] text-cy-300">{selected.size.toLocaleString()} selected · {fmtUsd(perDay)}/day</span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {(list?.rows ?? []).map((s) => {
+                  const isSel = selected.has(s.id);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => toggle(s)}
+                      className={`text-left card-tight p-4 border transition-colors ${
+                        isSel ? "border-cy-400/60 bg-cy-400/5" : "border-line-800 hover:border-line-700"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <Monitor size={14} className={isSel ? "text-cy-300" : "text-ink-400"} />
+                            <span className="text-[14px] font-medium text-ink-50 truncate">{s.name}</span>
+                          </div>
+                          <div className="text-[12px] text-ink-400 mt-1 flex items-center gap-1.5 capitalize">
+                            <MapPin size={11} /> {s.city} · {s.venue_type} · max {s.max_duration_s}s
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="text-[15px] font-semibold text-ink-50 tabular-nums">from ${fromPrice(s.daily_price_usd)}</div>
+                          <div className="text-[10px] uppercase tracking-wider text-ink-500">/day · ${s.daily_price_usd} all day</div>
+                        </div>
+                      </div>
+                      {isSel && <div className="mt-2 text-[11px] text-cy-300 flex items-center gap-1"><CheckCircle2 size={12} /> Selected</div>}
+                    </button>
+                  );
+                })}
+              </div>
+              {list && list.total > LIST_PAGE && (
+                <div className="flex items-center justify-center gap-3 py-4">
                   <button
-                    key={s.id}
                     type="button"
-                    onClick={() => toggle(s.id)}
-                    className={`text-left card-tight p-4 border transition-colors ${
-                      isSel ? "border-cy-400/60 bg-cy-400/5" : "border-line-800 hover:border-line-700"
-                    }`}
+                    disabled={listPage === 0 || listLoading}
+                    onClick={() => { setListPage((n) => Math.max(0, n - 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                    className="px-3 py-1.5 rounded-md text-[12px] font-medium border border-line-800 text-ink-300 hover:text-ink-50 disabled:opacity-40"
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <Monitor size={14} className={isSel ? "text-cy-300" : "text-ink-400"} />
-                          <span className="text-[14px] font-medium text-ink-50 truncate">{s.name}</span>
-                        </div>
-                        <div className="text-[12px] text-ink-400 mt-1 flex items-center gap-1.5 capitalize">
-                          <MapPin size={11} /> {s.city} · {s.venue_type} · max {s.max_duration_s}s
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <div className="text-[15px] font-semibold text-ink-50 tabular-nums">from ${fromPrice(s.daily_price_usd)}</div>
-                        <div className="text-[10px] uppercase tracking-wider text-ink-500">/day · ${s.daily_price_usd} all day</div>
-                      </div>
-                    </div>
-                    {isSel && <div className="mt-2 text-[11px] text-cy-300 flex items-center gap-1"><CheckCircle2 size={12} /> Selected</div>}
+                    ← Prev
                   </button>
-                );
-              })}
-              {filtered.length === 0 && <p className="text-sm text-ink-500 col-span-full py-8 text-center">No screens match those filters.</p>}
-              {filtered.length > listLimit && (
-                <div className="col-span-full flex flex-col items-center gap-2 py-4">
-                  <p className="text-[12px] text-ink-500">
-                    Showing {Math.min(listLimit, filtered.length).toLocaleString()} of {filtered.length.toLocaleString()} screens
-                  </p>
+                  <span className="text-[12px] text-ink-500 tabular-nums">
+                    Page {listPage + 1} of {Math.ceil(list.total / LIST_PAGE).toLocaleString()}
+                  </span>
                   <button
                     type="button"
-                    onClick={() => setListLimit((n) => n + 120)}
-                    className="px-3 py-1.5 rounded-md text-[12px] font-medium border border-line-800 text-ink-300 hover:text-ink-50 hover:border-line-600 transition-colors"
+                    disabled={(listPage + 1) * LIST_PAGE >= list.total || listLoading}
+                    onClick={() => { setListPage((n) => n + 1); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                    className="px-3 py-1.5 rounded-md text-[12px] font-medium border border-line-800 text-ink-300 hover:text-ink-50 disabled:opacity-40"
                   >
-                    Load more
+                    More →
                   </button>
                 </div>
               )}
@@ -632,7 +841,7 @@ export default function BookPage() {
           <div>
             <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Campaign name</label>
             <input type="text" maxLength={80} value={name} onChange={(e) => setName(e.target.value)}
-              placeholder={`${selectedScreens[0]?.city ?? "Glo"} campaign`}
+              placeholder={`${meta.get(selectedIds[0])?.city ?? city ?? "Glo"} campaign`}
               className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none placeholder-ink-500" />
           </div>
           {reviewPreview && (

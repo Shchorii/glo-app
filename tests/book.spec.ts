@@ -96,3 +96,47 @@ test("radius selects in bulk without hanging", async ({ page }) => {
   await expect(page.getByText(/\d{2,} screens · \$[\d,]+/)).toBeVisible({ timeout: 20000 });
   await expect(page.getByRole("button", { name: /^Next/ })).toBeEnabled();
 });
+
+test("clicking a screen shows its exact location and never stacks dots", async ({ page }) => {
+  await page.goto(`${BASE}/book`);
+  await page.waitForSelector("text=/screens within/i", { timeout: 20000 });
+  await page.waitForTimeout(1500);
+
+  // Regression: overlapping dots made individual screens unreadable and untappable.
+  const stacked = await page.evaluate(() => {
+    const pts = [...document.querySelectorAll(".glo-book-marker, .glo-cluster")].map((el) => {
+      const r = el.getBoundingClientRect();
+      return [r.x + r.width / 2, r.y + r.height / 2];
+    });
+    let n = 0;
+    for (let i = 0; i < pts.length; i++)
+      for (let j = i + 1; j < pts.length; j++)
+        if (Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]) < 20) n++;
+    return n;
+  });
+  expect(stacked).toBe(0);
+
+  for (let i = 0; i < 5 && (await page.locator(".glo-book-marker").count()) === 0; i++) {
+    await page.locator(".glo-cluster").first().click();
+    await page.waitForTimeout(1200);
+  }
+  await page.locator(".glo-book-marker").first().click({ force: true });
+
+  // Regression: the hover label was the only place a screen was identified.
+  const card = page.getByTestId("pinned-card");
+  await expect(card).toBeVisible();
+  await expect(page.getByTestId("pinned-address")).not.toHaveText(/Finding address/, { timeout: 15000 });
+  await expect(card.getByRole("link", { name: /Google Maps/ })).toHaveAttribute("href", /maps\/search/);
+});
+
+test("list view agrees with the map filters, paginates, and the URL restores it", async ({ page }) => {
+  await page.goto(`${BASE}/book?city=Chicago&venue=bar&view=list`);
+  const caption = page.getByTestId("list-caption");
+  await expect(caption).toHaveText(/Showing 1–\d+ of [\d,]+ screens/, { timeout: 20000 });
+  // Regression: List view rendered every screen as a card.
+  expect(await page.locator("button.card-tight").count()).toBeLessThanOrEqual(60);
+  for (const t of await page.locator("button.card-tight").allInnerTexts()) {
+    expect(t).toMatch(/Chicago/);
+    expect(t).toMatch(/bar/i);
+  }
+});
