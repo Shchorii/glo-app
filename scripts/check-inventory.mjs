@@ -30,12 +30,17 @@ async function rpc(fn, body) {
 // Williamsburg: a dense local block we expect to stay dense.
 const WBURG = { lat: 40.7045, lng: -73.966 };
 
+// First hit after idle is a Supabase cold start (~1.7s TTFB vs ~0.35s warm).
+// Measure warm latency so the check reports steady-state, and report cold
+// separately instead of pretending the threshold is looser than it is.
+const cold = await rpc("screens_near", { p_lat: WBURG.lat, p_lng: WBURG.lng, p_radius_m: 5000, p_limit: 3000 });
 const near = await rpc("screens_near", { p_lat: WBURG.lat, p_lng: WBURG.lng, p_radius_m: 5000, p_limit: 3000 });
 const count = await rpc("screens_near_count", { p_lat: WBURG.lat, p_lng: WBURG.lng, p_radius_m: 5000 });
 const rows = near.data;
 
-check("screens_near responds", rows.length > 0, `${rows.length} rows in ${near.ms}ms`);
-check("screens_near under 1500ms", near.ms < 1500, `${near.ms}ms`);
+check("screens_near responds", rows.length > 0, `${rows.length} rows`);
+check("warm latency under 900ms", near.ms < 900, `${near.ms}ms warm, ${cold.ms}ms cold`);
+check("cold start under 3s", cold.ms < 3000, `${cold.ms}ms — first visitor after idle waits this long`);
 check("true count >= fetched rows", Number(count.data) >= rows.length, `${count.data} total`);
 
 // Local density is the product. If this drops, the local pitch is dead.
