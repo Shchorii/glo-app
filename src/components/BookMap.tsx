@@ -54,6 +54,12 @@ export default function BookMap({
   const screensRef = useRef(screens);
   screensRef.current = screens;
 
+  /** Last screen the customer clicked: stays on screen so they can see exactly where it is. */
+  const [pinned, setPinned] = useState<Screen | null>(null);
+  const pinnedRef = useRef<string | null>(null);
+  pinnedRef.current = pinned?.id ?? null;
+  const [addr, setAddr] = useState<Record<string, string | null>>({});
+
   /** Union-select: functional setState in the parent composes, so batched toggles are safe. */
   function addToSelection(ids: string[]) {
     ids.filter((id) => !selectedRef.current.has(id)).forEach((id) => onToggleRef.current(id));
@@ -209,7 +215,8 @@ export default function BookMap({
         visible.forEach((s) => {
           if (markersRef.current.has(s.id)) return;
           const marker = L.marker([s.lat, s.lng], {
-            icon: iconFor(L, selectedRef.current.has(s.id)),
+            icon: iconFor(L, selectedRef.current.has(s.id), pinnedRef.current === s.id),
+            zIndexOffset: pinnedRef.current === s.id ? 1000 : 0,
           }).addTo(map);
           marker.bindTooltip(
             `<div class="glo-tip"><div class="glo-tip-corner">${esc(s.name)}</div>
@@ -219,6 +226,8 @@ export default function BookMap({
           marker.on("click", () => {
             if (draw.current.mode) return; // ignore marker taps while drawing
             onToggleRef.current(s.id);
+            marker.closeTooltip();
+            setPinned(s);
           });
           markersRef.current.set(s.id, marker);
         });
@@ -330,16 +339,33 @@ export default function BookMap({
     renderRef.current?.();
   }, [focus]);
 
-  // Reflect selection changes on markers
+  // Reflect selection and the pinned screen on markers
   useEffect(() => {
     (async () => {
       if (!mapRef.current) return;
       const L = (await import("leaflet")).default;
       markersRef.current.forEach((marker, id) => {
-        marker.setIcon(iconFor(L, selected.has(id)));
+        const isPinned = pinned?.id === id;
+        marker.setIcon(iconFor(L, selected.has(id), isPinned));
+        marker.setZIndexOffset(isPinned ? 1000 : 0);
       });
     })();
-  }, [selected]);
+  }, [selected, pinned]);
+
+  // Drop the card if its screen is filtered out or the map is torn down.
+  useEffect(() => {
+    if (pinned && !screens.some((s) => s.id === pinned.id)) setPinned(null);
+  }, [screens, pinned]);
+
+  // Resolve the street address for the pinned screen (cached per screen).
+  useEffect(() => {
+    if (!pinned || pinned.id in addr) return;
+    const ctrl = new AbortController();
+    reverseGeocode(pinned.lat, pinned.lng, ctrl.signal)
+      .then((a) => setAddr((m) => ({ ...m, [pinned.id]: a })))
+      .catch((e) => { if (e?.name !== "AbortError") setAddr((m) => ({ ...m, [pinned.id]: null })); });
+    return () => ctrl.abort();
+  }, [pinned, addr]);
 
   return (
     <div className="relative">
@@ -348,6 +374,15 @@ export default function BookMap({
         className="h-[320px] sm:h-[400px] w-full rounded-lg overflow-hidden border border-line-800 bg-bg-900"
         aria-label="Map of screens available to book"
       />
+      {pinned && (
+        <PinnedCard
+          screen={pinned}
+          address={addr[pinned.id]}
+          isSelected={selected.has(pinned.id)}
+          onToggle={() => onToggle(pinned.id)}
+          onClose={() => setPinned(null)}
+        />
+      )}
       {/* draw toolbar */}
       <div className="absolute top-2 right-2 z-[1000] flex flex-col gap-1.5 items-end">
         <div className="flex gap-1.5">
@@ -413,6 +448,10 @@ export default function BookMap({
           background: #a3e635;
           box-shadow: 0 0 8px rgba(163, 230, 53, 0.8);
         }
+        .glo-book-marker.pin .dot {
+          width: 18px; height: 18px; border: 3px solid #f4f6f8;
+        }
+        .glo-book-marker.pin .ring { width: 38px; height: 38px; border: 2px solid #f4f6f8; }
         .glo-book-marker .ring {
           position: absolute; inset: 0; margin: auto;
           width: 30px; height: 30px; border-radius: 9999px;
@@ -480,13 +519,81 @@ function clusterIcon(L: typeof import("leaflet"), n: number) {
   });
 }
 
-function iconFor(L: typeof import("leaflet"), isSelected: boolean) {
+function iconFor(L: typeof import("leaflet"), isSelected: boolean, isPinned = false) {
   return L.divIcon({
-    className: `glo-book-marker ${isSelected ? "sel" : "unsel"}`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
-    html: `${isSelected ? '<span class="ring"></span>' : ""}<span class="dot"></span>`,
+    className: `glo-book-marker ${isSelected ? "sel" : "unsel"}${isPinned ? " pin" : ""}`,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
+    html: `${isSelected || isPinned ? '<span class="ring"></span>' : ""}<span class="dot"></span>`,
   });
+}
+
+/** Details for the clicked screen, docked in the map corner so it never hides neighbouring dots. */
+function PinnedCard({
+  screen: s, address, isSelected, onToggle, onClose,
+}: {
+  screen: Screen;
+  /** undefined = still loading, null = lookup failed */
+  address: string | null | undefined;
+  isSelected: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+}) {
+  const coords = `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}`;
+  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`;
+  // Neighborhood comes from the resolved address; the stored label can be coarser than the pin.
+  const area = s.city;
+  return (
+    <div
+      role="dialog"
+      aria-label={`Screen details: ${s.name}`}
+      className="absolute left-2 bottom-2 z-[1000] w-[min(320px,calc(100%-1rem))] rounded-lg border border-lime-400/40 bg-bg-950/95 p-3 shadow-[0_6px_24px_rgba(0,0,0,0.5)] backdrop-blur"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold text-ink-50 truncate">{s.name}</p>
+          <p className="text-[11px] text-ink-400 capitalize">{s.venue_type}{area ? ` · ${area}` : ""}</p>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Close screen details" className="text-ink-500 hover:text-ink-50 text-[16px] leading-none px-1">×</button>
+      </div>
+      <p className="mt-2 text-[12px] text-ink-200" data-testid="pinned-address">
+        {address === undefined ? "Finding address…" : address ?? coords}
+      </p>
+      <p className="text-[11px] text-ink-500">
+        {address ? `${coords} · ` : ""}
+        <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="text-cy-300 hover:underline">Open in Google Maps</a>
+      </p>
+      <div className="mt-2.5 flex items-center justify-between gap-2">
+        <span className="text-[12px] text-ink-300">from ${fromPrice(s.daily_price_usd)}/day</span>
+        <button
+          type="button"
+          onClick={onToggle}
+          className={`px-2.5 py-1 rounded-md text-[12px] font-medium border ${
+            isSelected
+              ? "bg-cy-400/20 text-cy-300 border-cy-400/50"
+              : "bg-lime-400/15 text-lime-300 border-lime-400/50"
+          }`}
+        >
+          {isSelected ? "Selected · remove" : "Select screen"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** OSM Nominatim reverse lookup: "123 Main St, Neighborhood, City 90026". */
+async function reverseGeocode(lat: number, lng: number, signal: AbortSignal): Promise<string | null> {
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&lat=${lat}&lon=${lng}`;
+  const res = await fetch(url, { signal, headers: { Accept: "application/json" } });
+  if (!res.ok) return null;
+  const j = await res.json();
+  const a = j?.address ?? {};
+  const street = [a.house_number, a.road].filter(Boolean).join(" ");
+  const place = a.neighbourhood || a.suburb || a.quarter;
+  const town = a.city || a.town || a.village || a.hamlet;
+  const tail = [town, a.state_code || a.state].filter(Boolean).join(", ");
+  const parts = [street || (a.road ? `Near ${a.road}` : null), place, [tail, a.postcode].filter(Boolean).join(" ")].filter(Boolean);
+  return parts.length ? parts.join(", ") : j?.display_name ?? null;
 }
 
 function esc(s: string) {
