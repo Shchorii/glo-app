@@ -381,6 +381,9 @@ export default function BookMap({
           : capped
             ? `Showing ${shown.toLocaleString()} of the screens in view — zoom in for the rest.`
             : "Tap screens one by one, or use Radius / Area to grab every screen in a zone at once."}
+        {selected.size > 0 && (
+          <span className="text-cy-300"> · {selected.size.toLocaleString()} selected</span>
+        )}
       </p>
       <style jsx global>{`
         .glo-book-marker { background: transparent; border: none; }

@@ -387,6 +387,22 @@ export default function BookPage() {
             <div>
               <BookMap screens={filtered} selected={selected} onToggle={toggle} focus={hit?.center ?? null} />
               <p className="text-[11px] text-ink-500 mt-2">Tap a dot to select a screen. Selected screens glow cyan.</p>
+              {selectedScreens.length > 12 ? (
+                /* A bulk selection as 60 chips buries the Next button. Summarise instead. */
+                <div className="flex items-center justify-between gap-3 mt-3 px-3 py-2.5 rounded-lg bg-bg-900 border border-cy-400/30">
+                  <span className="text-[13px] text-ink-100">
+                    {selectedScreens.length.toLocaleString()} screens selected
+                    <span className="text-ink-500"> · {fmtUsd(selectedScreens.reduce((a, s) => a + s.daily_price_usd, 0))}/day</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(new Set())}
+                    className="text-[12px] text-ink-400 hover:text-ink-100 underline underline-offset-2 shrink-0"
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : (
               <div className="flex flex-wrap gap-2 mt-3">
                 {chipScreens.map((s) => {
                   const isSel = selected.has(s.id);
@@ -408,6 +424,7 @@ export default function BookPage() {
                   );
                 })}
               </div>
+              )}
             </div>
           )}
 
