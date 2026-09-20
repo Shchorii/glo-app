@@ -102,7 +102,8 @@ export default function BookPage() {
   // Auth gate
   useEffect(() => {
     if (!loading && isSupabaseConfigured && !user) {
-      router.replace("/sign-in?next=/book");
+      const search = typeof window === "undefined" ? "" : window.location.search;
+      router.replace(`/sign-in?next=${encodeURIComponent("/book" + search)}`);
     }
   }, [loading, user, router]);
 

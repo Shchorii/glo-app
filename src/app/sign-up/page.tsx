@@ -1,13 +1,14 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
 import { GloMark } from "@/components/Logo";
 import { Loader2 } from "lucide-react";
 
-export default function SignUpPage() {
+function SignUpForm() {
   const router = useRouter();
+  const nextUrl = useSearchParams().get("next") || "/studio";
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,7 +23,7 @@ export default function SignUpPage() {
     const { error } = await sb.auth.signUp({ email, password, options: { data: { full_name: name } } });
     setLoading(false);
     if (error) { setError(error.message || "Could not create account"); return; }
-    router.push("/studio");
+    router.push(nextUrl);
   }
 
   return (
@@ -57,10 +58,18 @@ export default function SignUpPage() {
             </button>
           </form>
           <p className="text-sm text-ink-400 mt-5 text-center">
-            Already have one? <Link href="/sign-in" className="text-cy-300 hover:text-cy-200">Sign in</Link>
+            Already have one? <Link href={`/sign-in${nextUrl === "/studio" ? "" : `?next=${encodeURIComponent(nextUrl)}`}`} className="text-cy-300 hover:text-cy-200">Sign in</Link>
           </p>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-sm text-ink-400">Loading...</div>}>
+      <SignUpForm />
+    </Suspense>
   );
 }
