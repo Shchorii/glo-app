@@ -40,7 +40,7 @@ function SignUpForm() {
               <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Name</label>
               <input type="text" required value={name} onChange={(e) => setName(e.target.value)}
                 className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none focus:ring-2 focus:ring-cy-400/20"
-                placeholder="Idan" />
+                placeholder="Your name" />
             </div>
             <div>
               <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Email</label>
