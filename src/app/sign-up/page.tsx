@@ -5,6 +5,7 @@ import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
 import { GloMark } from "@/components/Logo";
 import { Loader2 } from "lucide-react";
+import { SocialAuth } from "@/components/SocialAuth";
 
 function SignUpForm() {
   const router = useRouter();
@@ -33,6 +34,7 @@ function SignUpForm() {
         <div className="card p-7">
           <h1 className="text-xl font-semibold text-ink-50 mb-1">Create account</h1>
           <p className="text-sm text-ink-400 mb-6">Light up your first neighborhood.</p>
+          <SocialAuth next={nextUrl} mode="up" />
           <form onSubmit={onSubmit} className="space-y-4">
             <div>
               <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Name</label>
