@@ -24,7 +24,7 @@ function SignUpForm() {
     const { error } = await sb.auth.signUp({ email, password, options: { data: { full_name: name } } });
     setLoading(false);
     if (error) { setError(error.message || "Could not create account"); return; }
-    router.push(nextUrl);
+    router.push(`/onboarding?next=${encodeURIComponent(nextUrl)}`);
   }
 
   return (

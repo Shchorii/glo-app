@@ -27,7 +27,7 @@ function newId() {
 
 export function SupportChat() {
   const pathname = usePathname();
-  const hidden = pathname === "/book" || pathname.startsWith("/book/");
+  const hidden = pathname === "/book" || pathname.startsWith("/book/") || pathname.startsWith("/onboarding");
   const panelId = useId();
   const inputId = useId();
   const listRef = useRef<HTMLDivElement>(null);

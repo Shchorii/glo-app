@@ -1,4 +1,5 @@
 "use client";
+import { OnboardingGate } from "@/components/OnboardingGate";
 import { GloMark } from "./Logo";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -149,6 +150,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
+      <OnboardingGate />
       <main className="flex-1 min-w-0 overflow-x-hidden">{children}</main>
     </div>
   );
