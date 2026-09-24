@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "last message must be from user" }, { status: 400 });
   }
 
-  const OPENAI_KEY = process.env.OPENAI_API_KEY;
+  const OPENAI_KEY = process.env.OPENAI_API_KEY?.trim();
   if (!OPENAI_KEY) {
     console.error("OPENAI_API_KEY missing on glo-app");
     return NextResponse.json({ error: "server not configured" }, { status: 500 });
@@ -88,8 +88,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: { role: "assistant" as const, content } });
   } catch (e) {
     console.error("chat error", e);
-    return NextResponse.json({ error: "chat failed" }, { status: 502 });
+    const msg = e instanceof Error ? e.message : "chat failed";
+    const status = msg.includes("openai 401") ? 502 : msg.includes("openai 429") ? 503 : 502;
+    return NextResponse.json({ error: openAiUserError(msg) }, { status });
   }
+}
+
+function openAiUserError(raw: string): string {
+  if (raw.includes("openai 401")) {
+    return "OpenAI key rejected — re-copy OPENAI_API_KEY into glo-app on Vercel (must start with sk-)";
+  }
+  if (raw.includes("openai 429")) return "OpenAI rate limit — try again in a minute.";
+  if (raw.includes("openai 402") || raw.includes("openai 403")) {
+    return "OpenAI billing or access issue — check platform.openai.com billing.";
+  }
+  return "chat failed — check Vercel → glo-app → Logs after sending a message.";
 }
 
 async function completeChat(apiKey: string, messages: ChatMessage[]): Promise<string> {
@@ -119,3 +132,6 @@ async function completeChat(apiKey: string, messages: ChatMessage[]): Promise<st
   if (!content) throw new Error("empty assistant reply");
   return content.slice(0, 4000);
 }
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
