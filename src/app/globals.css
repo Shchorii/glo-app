@@ -41,6 +41,26 @@
     isolation: isolate;
   }
   *::selection { background-color: rgba(34,211,238,0.3); color: #F1F5FB; }
+
+  /* Kill the ~300ms tap delay and the grey iOS tap flash: feedback comes from our own press states. */
+  a, button, [role="button"], input, select, textarea, label { touch-action: manipulation; }
+  html { -webkit-tap-highlight-color: transparent; }
+
+  /* Type: tracking is size-specific. Large text tightens, small caps-labels open up. */
+  h1 { letter-spacing: -0.024em; line-height: 1.1; font-optical-sizing: auto; }
+  h2 { letter-spacing: -0.018em; line-height: 1.2; }
+  h3 { letter-spacing: -0.01em; }
+
+  /* One calm, consistent focus ring for keyboard users. */
+  :focus-visible { outline: 2px solid rgba(77,226,240,0.6); outline-offset: 2px; border-radius: 8px; }
+}
+
+/* Spring-shaped easing for CSS-only transitions (critically damped, ~0.35s response).
+   Gesture-driven motion uses real springs in src/lib/spring.ts instead. */
+:root {
+  --ease-spring: linear(0, 0.1 3.5%, 0.36 10%, 0.62 18%, 0.8 26%, 0.9 34%, 0.955 43%, 0.983 54%, 0.995 68%, 1);
+  --ease-spring-bounce: linear(0, 0.2 5%, 0.62 14%, 0.95 24%, 1.06 32%, 1.075 38%, 1.04 50%, 1.005 64%, 0.997 78%, 1);
+  --dur-spring: 320ms;
 }
 
 @layer utilities {
@@ -65,8 +85,72 @@
     background: linear-gradient(180deg, #0B121F 0%, #080D17 100%);
     border: 1px solid rgba(31,42,64,0.9);
     border-radius: 16px;
-    box-shadow: 0 1px 0 0 rgba(255,255,255,0.03) inset, 0 18px 48px -16px rgba(0,0,0,0.7);
+    box-shadow: 0 1px 0 0 rgba(255,255,255,0.045) inset, 0 18px 48px -16px rgba(0,0,0,0.7);
   }
+  /* Tappable cards: lift on hover, settle on press, springing back on release. */
+  .card-interactive {
+    transition: transform var(--dur-spring) var(--ease-spring), box-shadow .3s ease, border-color .25s ease;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .card-interactive:hover, .group:hover > .card-interactive { transform: translateY(-2px); }
+  }
+  .card-interactive:active, .group:active > .card-interactive { transform: scale(0.985); transition: transform 100ms ease-out, box-shadow .3s ease, border-color .25s ease; }
+
+  /* Generic press feedback for icon buttons and links. */
+  .press { transition: transform var(--dur-spring) var(--ease-spring), background-color .18s ease, color .18s ease; }
+  .press:active { transform: scale(0.94); transition: transform 100ms ease-out; }
+
+  .nav-item { transition: background-color .18s ease, color .18s ease, box-shadow .25s ease, transform var(--dur-spring) var(--ease-spring); }
+  .nav-item:active { transform: scale(0.98); transition: transform 100ms ease-out; }
+
+  /* ---------- Materials: translucency conveys hierarchy ---------- */
+  /* Light chrome over scrolling content */
+  .glass-bar {
+    background: rgba(4,7,13,0.62);
+    -webkit-backdrop-filter: blur(20px) saturate(170%);
+    backdrop-filter: blur(20px) saturate(170%);
+  }
+  /* Scroll-edge effect instead of a hard 1px divider */
+  .scroll-edge { position: sticky; }
+  .scroll-edge::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 14px; pointer-events: none;
+    background: linear-gradient(180deg, rgba(4,7,13,0.55), transparent);
+  }
+  /* Heavier, structural material (sidebars, drawers) */
+  .glass-sidebar {
+    background: rgba(7,11,20,0.55);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    backdrop-filter: blur(24px) saturate(160%);
+  }
+  .glass-panel {
+    background: rgba(8,13,23,0.82);
+    -webkit-backdrop-filter: blur(30px) saturate(170%);
+    backdrop-filter: blur(30px) saturate(170%);
+    box-shadow: inset -1px 0 0 rgba(255,255,255,0.04), 24px 0 60px -20px rgba(0,0,0,0.7);
+  }
+  /* Floating surfaces: bigger surface reads thicker (stronger blur, deeper shadow) */
+  .glass-float {
+    background: linear-gradient(180deg, rgba(14,22,38,0.82), rgba(8,13,23,0.88));
+    -webkit-backdrop-filter: blur(28px) saturate(170%);
+    backdrop-filter: blur(28px) saturate(170%);
+    border: 1px solid rgba(255,255,255,0.07);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 30px 80px -20px rgba(0,0,0,0.8), 0 8px 24px -8px rgba(0,0,0,0.5);
+  }
+  .glass-float-header {
+    background: rgba(255,255,255,0.025);
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+
+  /* Materialize: blur + scale + opacity together, anchored to its trigger (set transform-origin). */
+  .materialize { animation: gloMaterialize var(--dur-spring) var(--ease-spring) both; }
+  @keyframes gloMaterialize {
+    from { opacity: 0; transform: scale(0.9) translateY(8px); filter: blur(10px); }
+    to   { opacity: 1; transform: none; filter: blur(0); }
+  }
+  /* Content entering a page: rises a few px and settles */
+  .rise { animation: gloRise 520ms var(--ease-spring) both; }
+  .rise-1 { animation-delay: 40ms; } .rise-2 { animation-delay: 80ms; } .rise-3 { animation-delay: 120ms; }
+  @keyframes gloRise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   .card-tight {
     background: linear-gradient(180deg, #0E1726 0%, #0A1120 100%);
     border: 1px solid rgba(31,42,64,0.9);
@@ -75,14 +159,18 @@
   .btn {
     display: inline-flex; align-items: center; gap: 0.55rem;
     padding: 0.75rem 1.25rem; border-radius: 10px;
-    font-weight: 500; font-size: 0.92rem; transition: all 0.18s ease;
+    font-weight: 500; font-size: 0.92rem; letter-spacing: -0.005em;
+    transition: background-color .18s ease, border-color .18s ease, color .18s ease, box-shadow .25s ease, transform var(--dur-spring) var(--ease-spring);
     line-height: 1; white-space: nowrap; cursor: pointer;
   }
-  .btn-primary { background: #22D3EE; color: #04070D; }
+  /* Feedback lives on the press, and it's instant. Release springs back. */
+  .btn:active:not(:disabled) { transform: scale(0.97); transition: transform 100ms ease-out; }
+  .btn:disabled { cursor: not-allowed; }
+  .btn-primary { background: #22D3EE; color: #04070D; box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 1px 2px rgba(0,0,0,0.4); }
   .btn-primary:hover { background: #4DE2F0; box-shadow: 0 0 0 1px rgba(34,211,238,0.35), 0 0 24px -2px rgba(34,211,238,0.45); }
   .btn-ghost { background: transparent; color: #C9D2DF; border: 1px solid rgba(41,53,81,1); }
   .btn-ghost:hover { border-color: rgba(77,226,240,0.5); color: #F1F5FB; }
-  .btn-lime { background: #BEF264; color: #04070D; }
+  .btn-lime { background: #BEF264; color: #04070D; box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 1px 2px rgba(0,0,0,0.4); }
   .btn-lime:hover { background: #D1F574; }
 
   .chip {
@@ -239,3 +327,37 @@
     transform: none !important;
   }
 }
+
+/* ===================== Accessibility: motion, transparency, contrast ===================== */
+@media (prefers-reduced-motion: reduce) {
+  /* Gentler, non-vestibular equivalents: cross-fade instead of travel, no press scaling. */
+  .materialize { animation: gloFade 180ms ease both; }
+  .rise { animation: gloFade 180ms ease both; }
+  .btn:active:not(:disabled), .press:active, .nav-item:active,
+  .card-interactive:hover, .card-interactive:active,
+  .group:hover > .card-interactive, .group:active > .card-interactive { transform: none; }
+}
+@keyframes gloFade { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass-bar, .glass-sidebar, .glass-panel, .glass-float {
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+  .glass-bar { background: #04070D; }
+  .glass-sidebar { background: #070B14; }
+  .glass-panel, .glass-float { background: #0B111C; }
+}
+@media (prefers-contrast: more) {
+  .glass-bar, .glass-sidebar, .glass-panel, .glass-float { background: #070B14; border-color: #36446A; }
+  .card { border-color: #36446A; }
+}
+
+/* Typing indicator: three dots that breathe, not a strobing loop */
+.typing-dot { width: 6px; height: 6px; border-radius: 999px; background: #7B8AA0; animation: gloTyping 1.2s ease-in-out infinite; }
+.typing-dot:nth-child(2) { animation-delay: .15s; } .typing-dot:nth-child(3) { animation-delay: .3s; }
+@keyframes gloTyping { 0%,60%,100% { opacity: .35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) { .typing-dot { animation: none; opacity: .7; } }
+
+/* Drawer owns horizontal drags; the browser keeps vertical scrolling. Must be set on every
+   descendant because touch-action stops at the nearest scroll container (the nav list). */
+.fluid-drawer, .fluid-drawer * { touch-action: pan-y; }

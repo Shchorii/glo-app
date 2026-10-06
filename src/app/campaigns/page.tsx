@@ -67,7 +67,7 @@ export default function CampaignsPage() {
                   <Link
                     key={c.id}
                     href={`/campaigns/view?id=${c.id}`}
-                    className="card p-4 md:p-5 flex items-center justify-between gap-3 hover:border-cy-400/40 transition-colors group"
+                    className="card card-interactive p-4 md:p-5 flex items-center justify-between gap-3 hover:border-cy-400/40 group"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 mb-1">
@@ -83,7 +83,7 @@ export default function CampaignsPage() {
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="text-[15px] font-semibold text-ink-50 tabular-nums">{fmtUsd(c.total_usd)}</span>
-                      <ArrowRight size={16} className="text-ink-500 group-hover:text-cy-300 group-hover:translate-x-0.5 transition-all" />
+                      <ArrowRight size={16} className="text-ink-500 group-hover:text-cy-300 group-hover:translate-x-0.5 transition-[color,transform] duration-300 ease-[var(--ease-spring)]" />
                     </div>
                   </Link>
                 );

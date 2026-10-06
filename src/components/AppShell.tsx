@@ -1,6 +1,7 @@
 "use client";
 import { OnboardingGate } from "@/components/OnboardingGate";
 import { GloMark } from "./Logo";
+import { FluidDrawer } from "./FluidDrawer";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
@@ -24,7 +25,7 @@ function NavItems({ pathname, onNavigate }: { pathname: string; onNavigate?: () 
             key={href}
             href={href}
             onClick={onNavigate}
-            className={`flex items-center gap-3 px-3 py-3 rounded-lg text-[15px] transition-colors ${
+            className={`nav-item flex items-center gap-3 px-3 py-3 rounded-lg text-[15px] ${
               active
                 ? "bg-cy-400/10 text-cy-300 shadow-[inset_0_0_0_1px_rgba(34,211,238,0.2)]"
                 : "text-ink-200 hover:text-ink-50 hover:bg-bg-700/40"
@@ -46,7 +47,7 @@ function FooterItems({ pathname, onNavigate, onSignOut }: { pathname: string; on
       <Link
         href="/settings"
         onClick={onNavigate}
-        className={`flex items-center gap-3 px-3 py-3 rounded-lg text-[15px] ${
+        className={`nav-item flex items-center gap-3 px-3 py-3 rounded-lg text-[15px] ${
           settingsActive ? "bg-cy-400/10 text-cy-300" : "text-ink-200 hover:text-ink-50 hover:bg-bg-700/40"
         }`}
       >
@@ -56,7 +57,7 @@ function FooterItems({ pathname, onNavigate, onSignOut }: { pathname: string; on
       <button
         type="button"
         onClick={onSignOut}
-        className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-[15px] text-ink-300 hover:text-ink-50 hover:bg-bg-700/40"
+        className="nav-item w-full flex items-center gap-3 px-3 py-3 rounded-lg text-[15px] text-ink-300 hover:text-ink-50 hover:bg-bg-700/40"
       >
         <LogOut size={18} strokeWidth={1.8} />
         Sign out
@@ -89,58 +90,51 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen md:flex">
-      {/* MOBILE — top bar */}
-      <header className="md:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-bg-950/80 backdrop-blur border-b border-line-900">
-        <Link href="/" className="flex items-center"><GloMark size={26} motion="spin" /></Link>
+      {/* MOBILE — top bar: translucent material, content scrolls underneath */}
+      <header className="md:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 glass-bar scroll-edge">
+        <Link href="/" className="flex items-center press"><GloMark size={26} motion="spin" /></Link>
         <button
           type="button"
           aria-label="Open menu"
+          aria-expanded={drawerOpen}
           onClick={() => setDrawerOpen(true)}
-          className="-mr-2 p-2 rounded-lg text-ink-100 hover:bg-bg-700/40"
+          className="-mr-2 p-2 rounded-lg text-ink-100 hover:bg-bg-700/40 press"
         >
           <Menu size={22} strokeWidth={1.8} />
         </button>
       </header>
 
-      {/* MOBILE — drawer overlay */}
-      {drawerOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-40 bg-bg-950/70 backdrop-blur-sm"
-          onClick={() => setDrawerOpen(false)}
-          aria-hidden
-        />
-      )}
-
-      {/* MOBILE — drawer panel */}
-      <aside
-        className={`md:hidden fixed top-0 left-0 z-50 h-full w-72 max-w-[85vw] bg-bg-900 border-r border-line-900 flex flex-col transform transition-transform duration-200 ease-out ${
-          drawerOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
-        aria-hidden={!drawerOpen}
+      {/* MOBILE — drawer: drag to dismiss, flick-aware, interruptible */}
+      <FluidDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        className="w-72 max-w-[85vw] glass-panel border-r border-white/[0.06] flex flex-col"
       >
-        <div className="flex items-center justify-between px-5 py-5 border-b border-line-900">
-          <Link href="/" onClick={() => setDrawerOpen(false)}><GloMark size={30} motion="spin" /></Link>
+        <div className="flex items-center justify-between px-5 py-5">
+          <Link href="/" onClick={() => setDrawerOpen(false)} className="press"><GloMark size={30} motion="spin" /></Link>
           <button
             type="button"
             aria-label="Close menu"
             onClick={() => setDrawerOpen(false)}
-            className="-mr-2 p-2 rounded-lg text-ink-100 hover:bg-bg-700/40"
+            className="-mr-2 p-2 rounded-lg text-ink-100 hover:bg-bg-700/40 press"
           >
             <X size={22} strokeWidth={1.8} />
           </button>
         </div>
+        <div className="hairline mx-5" />
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           <NavItems pathname={pathname} onNavigate={() => setDrawerOpen(false)} />
         </nav>
-        <div className="px-3 py-4 border-t border-line-900">
+        <div className="hairline mx-5" />
+        <div className="px-3 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <FooterItems pathname={pathname} onNavigate={() => setDrawerOpen(false)} onSignOut={signOut} />
         </div>
-      </aside>
+      </FluidDrawer>
 
       {/* DESKTOP — persistent sidebar */}
-      <aside className="hidden md:flex md:flex-col w-60 border-r border-line-900 bg-bg-900/40 backdrop-blur-sm shrink-0">
+      <aside className="hidden md:flex md:flex-col w-60 border-r border-white/[0.05] glass-sidebar shrink-0 sticky top-0 h-screen">
         <div className="px-6 py-6 border-b border-line-900">
-          <Link href="/"><GloMark size={32} motion="spin" /></Link>
+          <Link href="/" className="press"><GloMark size={32} motion="spin" /></Link>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1">
           <NavItems pathname={pathname} />

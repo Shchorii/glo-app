@@ -658,7 +658,7 @@ function TemplateThumb({ tpl, active, accent, onClick }: {
       type="button"
       onClick={onClick}
       title={tpl.hint}
-      className={`text-left rounded-lg overflow-hidden border transition-all ${
+      className={`text-left rounded-lg overflow-hidden border press transition-[border-color,box-shadow,transform] ${
         active ? "border-cy-400/70 shadow-glow-cy scale-[1.02]" : "border-line-800 hover:border-line-600"
       }`}
     >

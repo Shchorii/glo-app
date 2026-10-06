@@ -144,9 +144,9 @@ export function SupportChat() {
           id={panelId}
           role="dialog"
           aria-labelledby={`${panelId}-title`}
-          className="w-[min(100vw-2rem,400px)] h-[min(72vh,560px)] flex flex-col card overflow-hidden shadow-2xl"
+          className="w-[min(100vw-2rem,400px)] h-[min(72vh,560px)] flex flex-col rounded-[20px] overflow-hidden glass-float materialize origin-bottom-right"
         >
-          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line-900 bg-bg-900/80">
+          <div className="flex items-center justify-between gap-3 px-4 py-3 glass-float-header">
             <div className="flex items-center gap-2.5">
               <GloBot variant="avatar" size={30} title="GloBot" />
               <div>
@@ -160,7 +160,7 @@ export function SupportChat() {
               type="button"
               aria-label="Close chat"
               onClick={() => setOpen(false)}
-              className="w-9 h-9 rounded-lg border border-line-700 text-ink-200 hover:text-ink-50 hover:bg-bg-800 transition-colors"
+              className="w-9 h-9 rounded-full bg-white/[0.04] text-ink-200 hover:text-ink-50 hover:bg-white/[0.08] press"
             >
               ×
             </button>
@@ -168,16 +168,16 @@ export function SupportChat() {
 
           <div
             ref={listRef}
-            className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-bg-950/40"
+            className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 space-y-3"
             aria-live="polite"
           >
             {messages.map((m) => (
-              <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div key={m.id} className={`flex rise ${m.role === "user" ? "justify-end origin-bottom-right" : "justify-start origin-bottom-left"}`}>
                 <div
-                  className={`max-w-[92%] rounded-xl px-3 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap ${
+                  className={`max-w-[92%] rounded-2xl px-3.5 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap ${
                     m.role === "user"
-                      ? "bg-cy-500/15 text-cy-100 border border-cy-500/25"
-                      : "bg-bg-900/90 text-ink-100 border border-line-800"
+                      ? "bg-cy-400 text-bg-950 font-medium rounded-br-md"
+                      : "bg-white/[0.06] text-ink-50 rounded-bl-md"
                   }`}
                 >
                   {m.content}
@@ -185,7 +185,7 @@ export function SupportChat() {
               </div>
             ))}
             {status === "sending" && (
-              <div className="text-[13px] text-ink-400 font-mono">Thinking…</div>
+              <div className="flex items-center gap-1.5 text-[13px] text-ink-400 rise" aria-label="Thinking"><span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></div>
             )}
             {status === "error" && error && (
               <div className="text-[13px] text-lime-300/90">{error}</div>
@@ -199,7 +199,7 @@ export function SupportChat() {
                   key={q}
                   type="button"
                   onClick={() => void sendUserText(q)}
-                  className="text-left text-[12px] px-3 py-1.5 rounded-full border border-line-700 text-ink-200 hover:text-ink-50 hover:border-cy-500/40 transition-colors"
+                  className="text-left text-[12px] px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.08] text-ink-100 hover:text-ink-50 hover:border-cy-500/40 press"
                 >
                   {q}
                 </button>
@@ -207,7 +207,7 @@ export function SupportChat() {
             </div>
           )}
 
-          <form onSubmit={onSubmit} className="p-3 border-t border-line-900 bg-bg-900/60">
+          <form onSubmit={onSubmit} className="p-3 border-t border-white/[0.05]">
             <label htmlFor={inputId} className="sr-only">
               Message
             </label>
@@ -221,7 +221,7 @@ export function SupportChat() {
                 onKeyDown={onKeyDown}
                 disabled={status === "sending"}
                 placeholder="Ask about campaigns…"
-                className="flex-1 resize-none rounded-lg border border-line-700 bg-bg-950 px-3 py-2 text-[14px] text-ink-50 placeholder:text-ink-500 focus:outline-none focus:border-cy-500/50 min-h-[44px] max-h-[120px]"
+                className="flex-1 resize-none rounded-xl border border-white/[0.08] bg-bg-950/70 px-3 py-2 text-[14px] text-ink-50 placeholder:text-ink-500 focus:outline-none focus:border-cy-500/50 min-h-[44px] max-h-[120px]"
               />
               <button
                 type="submit"
@@ -253,7 +253,7 @@ export function SupportChat() {
           aria-expanded
           aria-controls={panelId}
           onClick={() => setOpen(false)}
-          className="flex items-center gap-2 rounded-full px-4 py-3 text-[14px] font-medium shadow-lg border bg-bg-900 border-line-700 text-ink-100 transition-all hover:bg-bg-800 hover:text-ink-50"
+          className="flex items-center gap-2 rounded-full px-4 py-3 text-[14px] font-medium glass-float text-ink-100 hover:text-ink-50 press"
         >
           <span className="inline-block w-2 h-2 rounded-full bg-cy-300 shadow-glow-cy" aria-hidden />
           Close chat

@@ -60,7 +60,7 @@ export default function StudioUploadPage() {
         type="button"
         onClick={() => fileRef.current?.click()}
         disabled={uploading}
-        className="card p-8 md:p-12 w-full text-center border-dashed border-line-800 hover:border-cy-400/40 transition-all disabled:opacity-60"
+        className="card card-interactive p-8 md:p-12 w-full text-center border-dashed border-line-800 hover:border-cy-400/40 disabled:opacity-60"
       >
         <div className="w-12 h-12 rounded-lg bg-cy-400/10 text-cy-300 flex items-center justify-center mx-auto mb-4">
           {uploading ? <Loader2 size={22} className="animate-spin" /> : <Upload size={22} strokeWidth={1.8} />}

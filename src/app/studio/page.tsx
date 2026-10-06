@@ -178,7 +178,7 @@ function SourceCard({ icon: Icon, iconSpin, title, desc, accent }: {
     ? "group-hover:shadow-glow-cy group-hover:border-cy-400/40"
     : "group-hover:shadow-glow-lime group-hover:border-lime-400/40";
   return (
-    <div className={`card p-5 md:p-6 h-full transition-all ${accentClasses} border-line-800`}>
+    <div className={`card card-interactive p-5 md:p-6 h-full ${accentClasses} border-line-800`}>
       <div className="flex items-center justify-between mb-5">
         <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
           accent === "cy" ? "bg-cy-400/10 text-cy-300" : "bg-lime-400/10 text-lime-300"
