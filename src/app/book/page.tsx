@@ -335,9 +335,13 @@ export default function BookPage() {
   const days = daysBetween(startDate, endDate);
   const dpMult = daypartMultiplier(dayparts);
   const total = Math.round(perDay * dpMult * days * 100) / 100;
-  const chipScreens = selected.size
-    ? selectedIds.slice(0, 12).map((id) => meta.get(id)).filter(Boolean) as Screen[]
-    : chips;
+  // Picked screens first, then the remaining suggestions, so tapping one chip
+  // never hides the others (it used to look like only one screen could be picked).
+  const chipScreens = useMemo(() => {
+    const picked = selectedIds.slice(0, 12).map((id) => meta.get(id)).filter(Boolean) as Screen[];
+    const rest = chips.filter((s) => !selected.has(s.id));
+    return [...picked, ...rest];
+  }, [selectedIds, meta, chips, selected]);
   const citiesByState = useMemo(() => {
     const groups = new Map<string, CityOption[]>();
     cityOpts.forEach((c) => {
