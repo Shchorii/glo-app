@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 /**
  * Booking funnel smoke test.
@@ -14,6 +14,55 @@ const EMAIL = process.env.GLO_TEST_EMAIL;
 const PASSWORD = process.env.GLO_TEST_PASSWORD;
 
 test.skip(!EMAIL || !PASSWORD, "GLO_TEST_EMAIL / GLO_TEST_PASSWORD not set");
+
+const MAP = "[aria-label='Map of screens available to book']";
+
+/**
+ * IDA-15 centre gap, plus drawn-edge overlap. A screen's hit box is 40px but
+ * the dot is 14px (radius 7); cluster bubbles are the element itself.
+ */
+async function markerSpacing(page: Page) {
+  return page.evaluate(() => {
+    const pts = [...document.querySelectorAll(".glo-book-marker, .glo-cluster")].map((el) => {
+      const r = el.getBoundingClientRect();
+      const radius = el.classList.contains("glo-cluster") ? r.width / 2 : 7;
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2, radius };
+    });
+    let close = 0;
+    let overlap = 0;
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+        if (d < 20) close++;
+        if (d < pts[i].radius + pts[j].radius) overlap++;
+      }
+    }
+    return { close, overlap, n: pts.length };
+  });
+}
+
+async function expectSeparated(page: Page) {
+  await expect.poll(async () => {
+    const s = await markerSpacing(page);
+    return s.n > 0 && s.close === 0 && s.overlap === 0;
+  }, { timeout: 15000 }).toBe(true);
+}
+
+/** Zoom via the control. Scroll-wheel zoom is disabled. */
+async function zoomOutBy(page: Page, steps: number) {
+  const btn = page.locator(".leaflet-control-zoom-out");
+  const map = page.locator(MAP);
+  for (let i = 0; i < steps; i++) {
+    if (await btn.evaluate((el) => el.classList.contains("leaflet-disabled"))) break;
+    const before = await map.getAttribute("data-zoom");
+    await btn.click();
+    await expect.poll(async () => {
+      const zoom = await map.getAttribute("data-zoom");
+      const disabled = await btn.evaluate((el) => el.classList.contains("leaflet-disabled"));
+      return disabled || zoom !== before;
+    }, { timeout: 8000 }).toBe(true);
+  }
+}
 
 test.beforeEach(async ({ page }) => {
   await page.goto(`${BASE}/sign-in`);
@@ -114,18 +163,7 @@ test("clicking a screen shows its exact location and never stacks dots", async (
   await page.waitForTimeout(1500);
 
   // Regression: overlapping dots made individual screens unreadable and untappable.
-  const stacked = await page.evaluate(() => {
-    const pts = [...document.querySelectorAll(".glo-book-marker, .glo-cluster")].map((el) => {
-      const r = el.getBoundingClientRect();
-      return [r.x + r.width / 2, r.y + r.height / 2];
-    });
-    let n = 0;
-    for (let i = 0; i < pts.length; i++)
-      for (let j = i + 1; j < pts.length; j++)
-        if (Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]) < 20) n++;
-    return n;
-  });
-  expect(stacked).toBe(0);
+  await expectSeparated(page);
 
   for (let i = 0; i < 5 && (await page.locator(".glo-book-marker").count()) === 0; i++) {
     await page.locator(".glo-cluster").first().click();
@@ -138,6 +176,60 @@ test("clicking a screen shows its exact location and never stacks dots", async (
   await expect(card).toBeVisible();
   await expect(page.getByTestId("pinned-address")).not.toHaveText(/Finding address/, { timeout: 15000 });
   await expect(card.getByRole("link", { name: /Google Maps/ })).toHaveAttribute("href", /maps\/search/);
+});
+
+test("metro zoom and full zoom-out keep markers apart and show the whole US", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(`${BASE}/book`);
+  await page.waitForSelector("text=/screens within/i", { timeout: 20000 });
+  await expectSeparated(page);
+
+  const map = page.locator(MAP);
+  const localZoom = Number(await map.getAttribute("data-zoom"));
+  await zoomOutBy(page, 2);
+  // Two clicks down from the local view (13 → 11): the metro zoom QA measured.
+  expect(Number(await map.getAttribute("data-zoom"))).toBe(localZoom - 2);
+  await expectSeparated(page);
+
+  const zoomOut = page.locator(".leaflet-control-zoom-out");
+  for (let i = 0; i < 24; i++) {
+    if (await zoomOut.evaluate((el) => el.classList.contains("leaflet-disabled"))) break;
+    await zoomOutBy(page, 1);
+  }
+  await expect(zoomOut).toHaveClass(/leaflet-disabled/);
+  await expectSeparated(page);
+
+  // Contiguous US (lat 24–50, lng −125 to −66) is inside the viewport.
+  const bounds = {
+    south: Number(await map.getAttribute("data-south")),
+    north: Number(await map.getAttribute("data-north")),
+    west: Number(await map.getAttribute("data-west")),
+    east: Number(await map.getAttribute("data-east")),
+  };
+  expect(bounds.south).toBeLessThanOrEqual(24);
+  expect(bounds.north).toBeGreaterThanOrEqual(50);
+  expect(bounds.west).toBeLessThanOrEqual(-125);
+  expect(bounds.east).toBeGreaterThanOrEqual(-66);
+});
+
+test("full zoom-out shows the whole US on a phone", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 800 });
+  await page.goto(`${BASE}/book`);
+  await page.waitForSelector("text=/screens within/i", { timeout: 20000 });
+
+  const zoomOut = page.locator(".leaflet-control-zoom-out");
+  for (let i = 0; i < 24; i++) {
+    if (await zoomOut.evaluate((el) => el.classList.contains("leaflet-disabled"))) break;
+    await zoomOutBy(page, 1);
+  }
+  await expect(zoomOut).toHaveClass(/leaflet-disabled/);
+  await expectSeparated(page);
+
+  const map = page.locator(MAP);
+  expect(Number(await map.getAttribute("data-south"))).toBeLessThanOrEqual(24);
+  expect(Number(await map.getAttribute("data-north"))).toBeGreaterThanOrEqual(50);
+  expect(Number(await map.getAttribute("data-west"))).toBeLessThanOrEqual(-125);
+  expect(Number(await map.getAttribute("data-east"))).toBeGreaterThanOrEqual(-66);
 });
 
 test("list view agrees with the map filters, paginates, and the URL restores it", async ({ page }) => {

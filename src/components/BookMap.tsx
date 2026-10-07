@@ -7,8 +7,9 @@ import { DemoBadge } from "@/components/DemoBadge";
 import { lateNightFrom } from "@/lib/dayparts";
 import {
   fetchMap, selectPolygon, selectRadius,
-  type AreaResult, type Bbox, type Filters, type MapItem, type MapResult,
+  type AreaResult, type Bbox, type Filters, type MapResult,
 } from "@/lib/book-api";
+import { clusterDiameter, mergeNearby } from "@/lib/map-merge";
 
 type DrawMode = null | "circle" | "poly";
 type L = typeof import("leaflet");
@@ -28,6 +29,47 @@ type DrawState = {
 };
 
 const DEBOUNCE_MS = 300;
+
+/**
+ * Contiguous US. Inventory lives inside lat 25.6–47.8, lng −122.9 to −70.8,
+ * so this box has a margin for bubbles at the coasts. The lowest zoom is
+ * whatever fits this box in the current container, and that view is centred
+ * here — zooming out otherwise keeps the New York centre and clips the West.
+ */
+const CONUS_SW: [number, number] = [24, -125];
+const CONUS_NE: [number, number] = [50, -66];
+
+function conusBounds(Lf: L) {
+  return Lf.latLngBounds(CONUS_SW, CONUS_NE);
+}
+
+/** Highest zoom at which CONUS fits the container. Null when the map has no size yet. */
+function conusFitZoom(map: import("leaflet").Map, Lf: L): number | null {
+  const size = map.getSize();
+  if (size.x < 10 || size.y < 10) return null;
+  // getBoundsZoom clamps to the current minZoom, so measure from 0.
+  const prev = map.getMinZoom();
+  if (prev !== 0) map.setMinZoom(0);
+  const fit = map.getBoundsZoom(conusBounds(Lf), false);
+  if (map.getMinZoom() !== prev) map.setMinZoom(prev);
+  return fit;
+}
+
+function applyNationalFloor(map: import("leaflet").Map, Lf: L) {
+  const fit = conusFitZoom(map, Lf);
+  const floor = fit == null ? Math.max(map.getMinZoom(), 3) : fit;
+  if (map.getMinZoom() !== floor) map.setMinZoom(floor);
+}
+
+function publishView(map: import("leaflet").Map) {
+  const el = map.getContainer();
+  const b = map.getBounds();
+  el.dataset.zoom = String(map.getZoom());
+  el.dataset.south = String(b.getSouth());
+  el.dataset.west = String(b.getWest());
+  el.dataset.north = String(b.getNorth());
+  el.dataset.east = String(b.getEast());
+}
 
 /**
  * Screen-picking map. The database decides what is drawn for each viewport
@@ -257,7 +299,7 @@ export default function BookMap({
 
       const map = Lf.map(elRef.current, {
         zoomControl: true, scrollWheelZoom: false, dragging: true, attributionControl: true,
-        worldCopyJump: true, minZoom: 3,
+        worldCopyJump: true, minZoom: 0, maxBoundsViscosity: 1,
       });
       mapRef.current = map;
 
@@ -272,7 +314,26 @@ export default function BookMap({
       ).addTo(map);
 
       map.setView(initial.center, initial.zoom);
-      map.on("moveend", () => scheduleLoad());
+      applyNationalFloor(map, Lf);
+      map.setMaxBounds(conusBounds(Lf));
+
+      // The last zoom-out step frames the whole country. A plain zoomOut would
+      // keep the current centre (usually New York) and leave the West off-screen
+      // on a phone. Search and fly-to call setView / fitBounds, not zoomOut.
+      const zoomOut = map.zoomOut.bind(map);
+      map.zoomOut = (delta?: number, options?: import("leaflet").ZoomPanOptions) => {
+        const step = delta || map.options.zoomDelta || 1;
+        if (map.getZoom() - step <= map.getMinZoom()) {
+          return map.fitBounds(conusBounds(Lf), { animate: options?.animate });
+        }
+        return zoomOut(delta, options);
+      };
+
+      map.on("moveend", () => {
+        publishView(map);
+        scheduleLoad();
+      });
+      publishView(map);
       load();
 
       map.on("click", (e: import("leaflet").LeafletMouseEvent) => {
@@ -331,7 +392,19 @@ export default function BookMap({
       });
 
       if (typeof ResizeObserver !== "undefined" && elRef.current) {
-        const ro = new ResizeObserver(() => map.invalidateSize());
+        let framing = false;
+        const ro = new ResizeObserver(() => {
+          if (framing) return;
+          map.invalidateSize({ animate: false });
+          applyNationalFloor(map, Lf);
+          // Fully zoomed out always shows the whole country, including after
+          // the container gets shorter and the floor rises.
+          if (map.getZoom() <= map.getMinZoom() && !map.getBounds().contains(conusBounds(Lf))) {
+            framing = true;
+            map.fitBounds(conusBounds(Lf), { animate: false });
+            framing = false;
+          }
+        });
         ro.observe(elRef.current);
         roRef.current = ro;
       }
@@ -555,64 +628,9 @@ function ToolBtn({ active, onClick, label }: { active: boolean; onClick: () => v
   );
 }
 
-/** Minimum on-screen distance between two drawn items. */
-const MIN_GAP_PX = 36;
-
-/**
- * The server groups screens on a ~48px grid, but two screens either side of a
- * cell edge can still land on top of each other. Greedily fold anything closer
- * than MIN_GAP_PX into the bigger neighbour (no chaining), repeating until stable.
- */
-function mergeNearby(map: import("leaflet").Map, items: MapItem[]): MapItem[] {
-  type G = { n: number; lat: number; lng: number; min_price: number; min_lat: number; min_lng: number; max_lat: number; max_lng: number; screen: Screen | null };
-  let groups: G[] = items.map((it) =>
-    it.kind === "screen"
-      ? { n: 1, lat: it.screen.lat, lng: it.screen.lng, min_price: it.screen.daily_price_usd,
-          min_lat: it.screen.lat, min_lng: it.screen.lng, max_lat: it.screen.lat, max_lng: it.screen.lng, screen: it.screen }
-      : { n: it.n, lat: it.lat, lng: it.lng, min_price: it.min_price,
-          min_lat: it.min_lat, min_lng: it.min_lng, max_lat: it.max_lat, max_lng: it.max_lng, screen: null },
-  );
-  for (let pass = 0; pass < 4; pass++) {
-    const pts = groups.map((g) => map.latLngToContainerPoint([g.lat, g.lng]));
-    const order = groups.map((_, i) => i).sort((a, b) => groups[b].n - groups[a].n);
-    const taken = new Array(groups.length).fill(false);
-    const next: G[] = [];
-    let merged = false;
-    for (const i of order) {
-      if (taken[i]) continue;
-      taken[i] = true;
-      const g = { ...groups[i] };
-      let sumLat = g.lat * g.n, sumLng = g.lng * g.n;
-      for (const j of order) {
-        if (taken[j]) continue;
-        if (Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y) >= MIN_GAP_PX) continue;
-        taken[j] = true;
-        merged = true;
-        const h = groups[j];
-        g.n += h.n;
-        sumLat += h.lat * h.n; sumLng += h.lng * h.n;
-        g.min_price = Math.min(g.min_price, h.min_price);
-        g.min_lat = Math.min(g.min_lat, h.min_lat); g.min_lng = Math.min(g.min_lng, h.min_lng);
-        g.max_lat = Math.max(g.max_lat, h.max_lat); g.max_lng = Math.max(g.max_lng, h.max_lng);
-        g.screen = null;
-      }
-      g.lat = sumLat / g.n; g.lng = sumLng / g.n;
-      next.push(g);
-    }
-    groups = next;
-    if (!merged) break;
-  }
-  return groups.map((g) =>
-    g.n === 1 && g.screen
-      ? { kind: "screen" as const, screen: g.screen }
-      : { kind: "cluster" as const, n: g.n, lat: g.lat, lng: g.lng, min_price: g.min_price,
-          min_lat: g.min_lat, min_lng: g.min_lng, max_lat: g.max_lat, max_lng: g.max_lng },
-  );
-}
-
 /** Aggregated bubble: size scales with count, number rendered inside. */
 function clusterIcon(Lf: L, n: number) {
-  const size = n >= 1000 ? 56 : n >= 500 ? 50 : n >= 100 ? 44 : n >= 25 ? 38 : 32;
+  const size = clusterDiameter(n);
   const label = n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
   return Lf.divIcon({
     className: "glo-cluster",
