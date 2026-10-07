@@ -78,7 +78,7 @@ test("price stays identical from card to review", async ({ page }) => {
   await expect(listCard).toBeVisible({ timeout: 20000 });
   const listText = (await listCard.textContent()) ?? "";
   const listDaily = Number(listText.match(/\$(\d+)\/day/)?.[1]);
-  const lateNight = Number(listText.match(/from \$(\d+)/)?.[1]);
+  const lateNight = Number(listText.match(/from \$([\d,]+)/)?.[1]?.replace(/,/g, ""));
   expect(listText.toLowerCase()).toContain("late night");
   expect(lateNight).toBe(Math.ceil(listDaily * 0.15));
   expect(listText).not.toMatch(/from \$\d+\/d/);
@@ -104,7 +104,7 @@ test("radius selects in bulk without hanging", async ({ page }) => {
   await page.mouse.click(box.x + box.width / 2 + 120, box.y + box.height / 2 + 90);
 
   // Must land a multi-screen selection and stay responsive.
-  await expect(page.getByText(/\d{2,} screens · \$[\d,]+/)).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText(/[\d,]{2,} screens · \$[\d,]+/)).toBeVisible({ timeout: 20000 });
   await expect(page.getByRole("button", { name: /^Next/ })).toBeEnabled();
 });
 
@@ -138,6 +138,46 @@ test("clicking a screen shows its exact location and never stacks dots", async (
   await expect(card).toBeVisible();
   await expect(page.getByTestId("pinned-address")).not.toHaveText(/Finding address/, { timeout: 15000 });
   await expect(card.getByRole("link", { name: /Google Maps/ })).toHaveAttribute("href", /maps\/search/);
+});
+
+test("a dot opens details without selecting, and close dismisses the card", async ({ page }) => {
+  await page.goto(`${BASE}/book`);
+  await page.waitForSelector("text=/screens within/i", { timeout: 20000 });
+  await page.waitForTimeout(1500);
+
+  for (let i = 0; i < 5 && (await page.locator(".glo-book-marker").count()) === 0; i++) {
+    await page.locator(".glo-cluster").first().click();
+    await page.waitForTimeout(1200);
+  }
+  const selectedFooter = page.getByText(/\d[\d,]* screen(?:s)? · \$/);
+  await expect(selectedFooter).toHaveCount(0);
+
+  await page.locator(".glo-book-marker").first().click({ force: true });
+  const card = page.getByTestId("pinned-card");
+  await expect(card).toBeVisible();
+  await expect(selectedFooter).toHaveCount(0);
+  await expect(page.getByTestId("map-caption")).not.toContainText(/selected/);
+
+  const daily = ((await card.locator("text=/\\$[\\d,]+\\/day/").first().textContent()) ?? "").match(/\$[\d,]+\/day/)?.[0];
+  expect(daily).toBeTruthy();
+  await card.getByRole("button", { name: "Select screen" }).click();
+  await expect(page.getByText(new RegExp(`1 screen · \\${daily}`))).toBeVisible();
+
+  await card.getByRole("button", { name: "Close screen details" }).click();
+  await expect(card).toHaveCount(0);
+});
+
+test("step bar fits at 400px without horizontal scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 800 });
+  await page.goto(`${BASE}/book`);
+  await page.waitForSelector("text=/screens within/i", { timeout: 20000 });
+
+  const fits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+  expect(fits).toBe(true);
+  const review = await page.getByRole("button", { name: /Review/ }).boundingBox();
+  expect(review).toBeTruthy();
+  expect(review!.x).toBeGreaterThanOrEqual(0);
+  expect(review!.x + review!.width).toBeLessThanOrEqual(400);
 });
 
 test("list view agrees with the map filters, paginates, and the URL restores it", async ({ page }) => {

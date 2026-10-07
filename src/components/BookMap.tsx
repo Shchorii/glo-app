@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
-import type { Screen } from "@/lib/db";
+import { fmtUsd, type Screen } from "@/lib/db";
 import { DemoBadge } from "@/components/DemoBadge";
 import { lateNightFrom } from "@/lib/dayparts";
 import {
@@ -65,8 +65,6 @@ export default function BookMap({
   filtersRef.current = filters;
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
-  const onToggleRef = useRef(onToggle);
-  onToggleRef.current = onToggle;
   const onSelectManyRef = useRef(onSelectMany);
   onSelectManyRef.current = onSelectMany;
   const onViewportRef = useRef(onViewport);
@@ -135,7 +133,7 @@ export default function BookMap({
       const bubble = Lf.marker([c.lat, c.lng], { icon: clusterIcon(Lf, c.n), keyboard: false }).addTo(map);
       bubble.bindTooltip(
         `<div class="glo-tip"><div class="glo-tip-corner">${c.n.toLocaleString()} screens</div>
-         <div class="glo-tip-meta">from $${c.min_price}/day &middot; tap to zoom in</div></div>`,
+         <div class="glo-tip-meta">from ${fmtUsd(c.min_price)}/day &middot; tap to zoom in</div></div>`,
         { direction: "top", offset: [0, -20], opacity: 1 },
       );
       bubble.on("click", () => {
@@ -165,12 +163,11 @@ export default function BookMap({
       }).addTo(map);
       marker.bindTooltip(
         `<div class="glo-tip"><div class="glo-tip-corner">${esc(s.name)}${s.source === "demo" ? '<span class="glo-demo">Demo</span>' : ""}</div>
-         <div class="glo-tip-meta">${esc(s.city)} &middot; ${esc(s.venue_type)} &middot; $${s.daily_price_usd}/day &middot; tap to select</div></div>`,
+         <div class="glo-tip-meta">${esc(s.city)} &middot; ${esc(s.venue_type)} &middot; ${fmtUsd(s.daily_price_usd)}/day &middot; tap for details</div></div>`,
         { direction: "top", offset: [0, -16], opacity: 1 },
       );
       marker.on("click", () => {
         if (draw.current.mode) return;
-        onToggleRef.current(s);
         marker.closeTooltip();
         setPinned(s);
       });
@@ -273,6 +270,7 @@ export default function BookMap({
 
       map.setView(initial.center, initial.zoom);
       map.on("moveend", () => scheduleLoad());
+      map.on("zoomstart", () => setPinned(null));
       load();
 
       map.on("click", (e: import("leaflet").LeafletMouseEvent) => {
@@ -355,6 +353,8 @@ export default function BookMap({
   const firstFilters = useRef(true);
   useEffect(() => {
     if (firstFilters.current) { firstFilters.current = false; return; }
+    setSelectNote(null);
+    setPinned(null);
     const map = mapRef.current;
     if (!map) return;
     markersRef.current.forEach((m) => map.removeLayer(m));
@@ -375,6 +375,28 @@ export default function BookMap({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus?.key]);
+
+  // A zone note and its shapes describe the current selection. Drop both once
+  // nothing is selected (page Clear, last chip, etc.), and drop the note when
+  // city/venue filters change (handled above).
+  useEffect(() => {
+    if (selected.size !== 0) return;
+    setSelectNote(null);
+    const map = mapRef.current;
+    if (!map || draw.current.final.length === 0) return;
+    draw.current.final.forEach((l) => map.removeLayer(l));
+    draw.current.final = [];
+    setHasShapes(false);
+  }, [selected]);
+
+  useEffect(() => {
+    if (!pinned) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPinned(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pinned]);
 
   // Reflect selection and the pinned screen on markers.
   useEffect(() => {
@@ -472,7 +494,7 @@ export default function BookMap({
               ? "No screens in view."
               : result.truncated
               ? `Showing the ${result.items.length.toLocaleString()} cheapest of ${total.toLocaleString()} screens in view · zoom in for the rest.`
-              : `${total.toLocaleString()} screen${total === 1 ? "" : "s"} in view · tap a dot to select, a bubble to zoom in, or use Radius / Area for a whole zone.`}
+              : `${total.toLocaleString()} screen${total === 1 ? "" : "s"} in view · tap a dot for details, a bubble to zoom in, or use Radius / Area for a whole zone.`}
         {selected.size > 0 && <span className="text-cy-300"> · {selected.size.toLocaleString()} selected</span>}
       </p>
       {selectNote && <p className="text-[11px] text-cy-300 mt-1" role="status">{selectNote}</p>}
@@ -643,7 +665,9 @@ function PinnedCard({
   onClose: () => void;
 }) {
   const coords = `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}`;
-  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`;
+  const mapsUrl = address
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
+    : `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`;
   return (
     <div
       role="dialog"
@@ -659,7 +683,7 @@ function PinnedCard({
           </p>
           <p className="text-[11px] text-ink-400 capitalize">{s.venue_type} · {s.city}</p>
         </div>
-        <button type="button" onClick={onClose} aria-label="Close screen details" className="text-ink-500 hover:text-ink-50 text-[16px] leading-none px-1">×</button>
+        <button type="button" onClick={onClose} aria-label="Close screen details" className="grid h-8 w-8 shrink-0 place-items-center -mr-1 -mt-1 rounded-md text-ink-500 hover:text-ink-50 hover:bg-bg-800 text-[16px] leading-none">×</button>
       </div>
       <p className="mt-2 text-[12px] text-ink-200" data-testid="pinned-address">
         {address === undefined ? "Finding address…" : address ?? coords}
@@ -670,8 +694,8 @@ function PinnedCard({
       </p>
       <div className="mt-2.5 flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-[12px] text-ink-300 tabular-nums">${s.daily_price_usd}/day</div>
-          <div className="text-[10px] text-ink-500">from ${lateNightFrom(s.daily_price_usd)} · late night</div>
+          <div className="text-[12px] text-ink-300 tabular-nums">{fmtUsd(s.daily_price_usd)}/day</div>
+          <div className="text-[10px] text-ink-500">from {fmtUsd(lateNightFrom(s.daily_price_usd))} · late night</div>
         </div>
         <button
           type="button"
