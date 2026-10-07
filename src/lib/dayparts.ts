@@ -11,11 +11,11 @@ export const DAYPARTS: Daypart[] = [
   { id: "late_night",   label: "Late night",   range: "10pm-12am", share: 0.15, note: "cheaper" },
 ];
 
-/** Cheapest bookable slot share (late night). Used for "from" pricing anchors. */
+/** Cheapest bookable slot share (late night, 10pm–12am). */
 export const MIN_DAYPART_SHARE = Math.min(...DAYPARTS.map((d) => d.share));
 
-/** Lowest possible per-day price for a screen: one cheap slot, rounded up so we never understate. */
-export function fromPrice(dailyUsd: number): number {
+/** Cheapest single-slot price (late night), rounded up. Not a per-day price. */
+export function lateNightFrom(dailyUsd: number): number {
   return Math.ceil(dailyUsd * MIN_DAYPART_SHARE);
 }
 
