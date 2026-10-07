@@ -7,8 +7,9 @@
 --
 -- Does not delete. Does not touch source, prices, coordinates, availability,
 -- campaigns, campaign_screens, payments, or public.screens_backup_20260917.
--- public.screens_rebuild_stage gets the same renames when it is present, so a
--- later copy of that table cannot put the old names back.
+-- public.screens_rebuild_stage has no city column. When it is present, the
+-- screens plan is copied onto it by id (name and neighborhood only), so a later
+-- copy of that table cannot put the old names back.
 
 -- ---------------------------------------------------------------------------
 -- Denylist: exact base name, case-insensitive, after stripping a trailing " #N".
@@ -488,22 +489,34 @@ $fn$;
 
 do $apply$
 declare
-  stage_cols int;
+  stage_left int;
+  stage_updated int;
 begin
   perform public.apply_screen_name_cleanup('public.screens'::regclass);
 
   if to_regclass('public.screens_rebuild_stage') is null then
     raise notice 'public.screens_rebuild_stage is absent; no staged names to rewrite';
   else
-    select count(*) into stage_cols
-      from information_schema.columns
-     where table_schema = 'public'
-       and table_name = 'screens_rebuild_stage'
-       and column_name in ('id', 'name', 'neighborhood', 'city');
-    if stage_cols <> 4 then
-      raise exception 'public.screens_rebuild_stage is missing id, name, neighborhood, or city';
+    -- Stage rows share screens.id and, before this migration, the same name and
+    -- neighborhood. Stage has no city column, so it cannot run the screens cleanup.
+    update public.screens_rebuild_stage r
+       set name = p.final_name,
+           neighborhood = p.new_neighborhood
+      from pg_temp._screen_name_plan p
+     where r.id = p.id
+       and r.name = p.old_name
+       and r.neighborhood is not distinct from p.old_neighborhood;
+    get diagnostics stage_updated = row_count;
+
+    select count(*)::int into stage_left
+      from public.screens_rebuild_stage r
+      join public.screens s on s.id = r.id
+     where public.screen_name_rejection(r.name, r.neighborhood, s.city) is not null;
+    if stage_left <> 0 then
+      raise exception 'public.screens_rebuild_stage still has % screen-name violation(s) after cleanup', stage_left;
     end if;
-    perform public.apply_screen_name_cleanup('public.screens_rebuild_stage'::regclass);
+
+    raise notice 'screen name cleanup on screens_rebuild_stage updated % row(s)', stage_updated;
   end if;
 end
 $apply$;
