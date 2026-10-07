@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import type { Screen } from "@/lib/db";
 import { DemoBadge } from "@/components/DemoBadge";
-import { fromPrice } from "@/lib/dayparts";
+import { lateNightFrom } from "@/lib/dayparts";
 import {
   fetchMap, selectPolygon, selectRadius,
   type AreaResult, type Bbox, type Filters, type MapItem, type MapResult,
@@ -135,7 +135,7 @@ export default function BookMap({
       const bubble = Lf.marker([c.lat, c.lng], { icon: clusterIcon(Lf, c.n), keyboard: false }).addTo(map);
       bubble.bindTooltip(
         `<div class="glo-tip"><div class="glo-tip-corner">${c.n.toLocaleString()} screens</div>
-         <div class="glo-tip-meta">from $${fromPrice(c.min_price)}/day &middot; tap to zoom in</div></div>`,
+         <div class="glo-tip-meta">from $${c.min_price}/day &middot; tap to zoom in</div></div>`,
         { direction: "top", offset: [0, -20], opacity: 1 },
       );
       bubble.on("click", () => {
@@ -165,7 +165,7 @@ export default function BookMap({
       }).addTo(map);
       marker.bindTooltip(
         `<div class="glo-tip"><div class="glo-tip-corner">${esc(s.name)}${s.source === "demo" ? '<span class="glo-demo">Demo</span>' : ""}</div>
-         <div class="glo-tip-meta">${esc(s.city)} &middot; ${esc(s.venue_type)} &middot; from $${fromPrice(s.daily_price_usd)}/day &middot; tap to select</div></div>`,
+         <div class="glo-tip-meta">${esc(s.city)} &middot; ${esc(s.venue_type)} &middot; $${s.daily_price_usd}/day &middot; tap to select</div></div>`,
         { direction: "top", offset: [0, -16], opacity: 1 },
       );
       marker.on("click", () => {
@@ -669,7 +669,10 @@ function PinnedCard({
         <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="text-cy-300 hover:underline">Open in Google Maps</a>
       </p>
       <div className="mt-2.5 flex items-center justify-between gap-2">
-        <span className="text-[12px] text-ink-300">from ${fromPrice(s.daily_price_usd)}/day</span>
+        <div className="min-w-0">
+          <div className="text-[12px] text-ink-300 tabular-nums">${s.daily_price_usd}/day</div>
+          <div className="text-[10px] text-ink-500">from ${lateNightFrom(s.daily_price_usd)} · late night</div>
+        </div>
         <button
           type="button"
           onClick={onToggle}

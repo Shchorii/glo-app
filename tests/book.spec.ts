@@ -58,28 +58,39 @@ test("price stays identical from card to review", async ({ page }) => {
   await page.getByPlaceholder(/ZIP, neighborhood or city/i).fill("11249");
   await expect(page.getByText(/screens near 11249/i)).toBeVisible({ timeout: 20000 });
 
-  const chip = page.locator("button", { hasText: /from \$\d+\/d/ }).first();
+  const chip = page.locator("button", { hasText: /\$\d+\/day/ }).first();
   const chipText = (await chip.textContent()) ?? "";
-  const fromPrice = Number(chipText.match(/from \$(\d+)\/d/)?.[1]);
-  expect(fromPrice).toBeGreaterThan(0);
+  const chipDaily = Number(chipText.match(/\$(\d+)\/day/)?.[1]);
+  expect(chipDaily).toBeGreaterThan(0);
+  // Chip is the all-day $/day rate, not a late-night "from $N/d" anchor.
+  expect(chipText).not.toMatch(/from \$\d+\/d/);
   await chip.click();
 
   // Footer shows the all-day daily rate for the selection.
   const footer = page.getByText(/1 screen · \$\d+/);
   await expect(footer).toBeVisible();
   const daily = Number(((await footer.textContent()) ?? "").match(/\$(\d+)/)?.[1]);
+  expect(chipDaily).toBe(daily);
 
-  // The advertised floor must be the cheapest daypart share of the real rate.
-  expect(fromPrice).toBe(Math.ceil(daily * 0.15));
+  // List card: primary is the all-day rate; late night is an explicit slot price.
+  await page.getByRole("button", { name: "List" }).click();
+  const listCard = page.locator("button.card-tight", { hasText: /late night/i }).first();
+  await expect(listCard).toBeVisible({ timeout: 20000 });
+  const listText = (await listCard.textContent()) ?? "";
+  const listDaily = Number(listText.match(/\$(\d+)\/day/)?.[1]);
+  const lateNight = Number(listText.match(/from \$(\d+)/)?.[1]);
+  expect(listText.toLowerCase()).toContain("late night");
+  expect(lateNight).toBe(Math.ceil(listDaily * 0.15));
+  expect(listText).not.toMatch(/from \$\d+\/d/);
 
   await page.getByRole("button", { name: /^Next/ }).click();
   await expect(page.getByText(/1 day × \$\d+\/day/)).toBeVisible();
   await page.getByRole("button", { name: /^Next/ }).click();
   await page.getByRole("button", { name: /Skip for now/i }).click();
 
-  // Review must agree with the card, not recompute differently.
+  // Review must agree with the chip and the footer, not a slot price.
   await expect(page.getByText(/TOTAL/i)).toBeVisible();
-  await expect(page.getByText(new RegExp(`\\$${daily}`))).toBeVisible();
+  await expect(page.getByText(new RegExp(`\\$${daily}/day`))).toBeVisible();
 });
 
 test("radius selects in bulk without hanging", async ({ page }) => {

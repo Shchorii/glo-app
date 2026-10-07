@@ -12,7 +12,7 @@ import { useSession } from "@/lib/auth-client";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import BookMap, { type MapFocus, type Viewport } from "@/components/BookMap";
 import { DemoBadge } from "@/components/DemoBadge";
-import { DAYPARTS, daypartMultiplier, daypartSummary, fromPrice } from "@/lib/dayparts";
+import { DAYPARTS, daypartMultiplier, daypartSummary, lateNightFrom } from "@/lib/dayparts";
 import { TemplateBuilder, renderTemplatePng, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
 import {
   MapPin, List, Map as MapIcon, Monitor, Calendar, ImagePlus, Wand2, FolderOpen,
@@ -763,7 +763,7 @@ export default function BookPage() {
                       <span className={`w-1.5 h-1.5 rounded-full ${isSel ? "bg-cy-300 shadow-[0_0_6px_rgba(34,211,238,0.9)]" : "bg-lime-400 shadow-[0_0_6px_rgba(163,230,53,0.8)]"}`} />
                       {s.name}
                       {s.source === "demo" && <DemoBadge />}
-                      <span className="text-ink-500 tabular-nums">from ${fromPrice(s.daily_price_usd)}/d</span>
+                      <span className="text-ink-500 tabular-nums">{fmtUsd(s.daily_price_usd)}/day</span>
                     </button>
                   );
                 })}
@@ -811,8 +811,8 @@ export default function BookPage() {
                           </div>
                         </div>
                         <div className="text-right shrink-0">
-                          <div className="text-[15px] font-semibold text-ink-50 tabular-nums">from ${fromPrice(s.daily_price_usd)}</div>
-                          <div className="text-[10px] uppercase tracking-wider text-ink-500">/day · ${s.daily_price_usd} all day</div>
+                          <div className="text-[15px] font-semibold text-ink-50 tabular-nums">{fmtUsd(s.daily_price_usd)}/day</div>
+                          <div className="text-[10px] text-ink-500">from ${lateNightFrom(s.daily_price_usd)} · late night</div>
                         </div>
                       </div>
                       {isSel && <div className="mt-2 text-[11px] text-cy-300 flex items-center gap-1"><CheckCircle2 size={12} /> Selected</div>}
