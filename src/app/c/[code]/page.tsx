@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { routeMetadata } from "@/lib/seo";
 import { dummyOffer } from "@/lib/dummy-data";
 import { GloMark } from "@/components/Logo";
 import { ScanBeacon } from "./ScanBeacon";
@@ -7,6 +9,11 @@ export function generateStaticParams() {
   return [{ code: "JP-FRIDAY10" }];
 }
 export const dynamicParams = false;
+
+export async function generateMetadata({ params }: { params: Promise<{ code: string }> }): Promise<Metadata> {
+  const { code } = await params;
+  return routeMetadata({ path: `/c/${code}/`, title: "Your offer" });
+}
 
 // Deterministic per-visit redemption code
 function genCode(seed: string): string {
