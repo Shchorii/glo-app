@@ -587,7 +587,13 @@ export default function BookPage() {
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-500 pointer-events-none" />
                 <input
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setHit(null);
+                    setNoMatch(false);
+                    setSuggestions([]);
+                    setSuggestOpen(false);
+                  }}
                   onKeyDown={onSearchKeyDown}
                   onFocus={() => { if (suggestions.length > 1) setSuggestOpen(true); }}
                   placeholder="ZIP, neighborhood or city"
@@ -626,6 +632,7 @@ export default function BookPage() {
                           role="option"
                           aria-selected={i === activeSuggest}
                           onMouseEnter={() => setActiveSuggest(i)}
+                          onMouseDown={(e) => e.preventDefault()}
                           onClick={() => choosePlace(s)}
                           className={`flex w-full items-baseline justify-between gap-3 px-3 py-2 text-left text-[13px] ${
                             i === activeSuggest ? "bg-bg-800 text-ink-100" : "text-ink-200 hover:bg-bg-800"
