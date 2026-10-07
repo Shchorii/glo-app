@@ -75,7 +75,7 @@ Deno.serve(async (req) => {
     const admin = createClient(url, service);
     const { data: c, error: cErr } = await admin
       .from("campaigns")
-      .select("id, user_id, name, start_date, end_date, status, dayparts, creative_id, creatives(review_status, rejection_reason), campaign_screens(screens(daily_price_usd))")
+      .select("id, user_id, name, start_date, end_date, status, dayparts, creative_id, creatives(review_status, rejection_reason), campaign_screens(screens(daily_price_usd, source))")
       .eq("id", campaign_id)
       .maybeSingle();
     if (cErr) throw cErr;
@@ -96,7 +96,16 @@ Deno.serve(async (req) => {
       }
     }
 
-    const prices = ((c.campaign_screens as { screens: { daily_price_usd: string | number } }[]) ?? [])
+    const lines = (c.campaign_screens as { screens: { daily_price_usd: string | number; source?: string | null } | null }[]) ?? [];
+    const demoCount = lines.filter((cs) => cs.screens?.source === "demo").length;
+    if (demoCount > 0) {
+      return json(
+        { error: `This campaign includes ${demoCount} demo screen(s). Demo inventory can't be booked or paid.` },
+        409,
+      );
+    }
+
+    const prices = lines
       .map((cs) => Number(cs.screens?.daily_price_usd ?? 0))
       .filter((n) => n > 0);
     const days = daysBetween(c.start_date, c.end_date);
@@ -131,8 +140,10 @@ Deno.serve(async (req) => {
       metadata: { campaign_id: c.id, user_id: user.id },
     });
 
-    // Keep the stored total honest and record the payment attempt
-    await admin.from("campaigns").update({ total_usd: total, status: "pending_payment" }).eq("id", c.id);
+    // Keep the stored total honest and record the payment attempt.
+    // The demo guard rejects this update; surface that instead of ignoring it.
+    const { error: upErr } = await admin.from("campaigns").update({ total_usd: total, status: "pending_payment" }).eq("id", c.id);
+    if (upErr) return json({ error: upErr.message }, 409);
     const { error: pErr } = await admin.from("payments").insert({
       campaign_id: c.id,
       user_id: user.id,

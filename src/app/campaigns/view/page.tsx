@@ -12,6 +12,7 @@ import {
 import { creativeAttachError, isPaidLiveStatus } from "@/lib/moderation";
 import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock, Trash2, Timer, RefreshCw } from "lucide-react";
 import { daypartSummary } from "@/lib/dayparts";
+import { DemoBadge } from "@/components/DemoBadge";
 
 const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
   draft:           { label: "Draft",            cls: "bg-bg-700/60 text-ink-200 border-line-700" },
@@ -182,6 +183,7 @@ function CampaignView() {
 
   const rejected = c.creative?.review_status === "rejected";
   const payBlocked = c.creative ? creativeAttachError(c.creative, "pending_review") : null;
+  const demoCount = c.screens.filter((s) => s.source === "demo").length;
 
   return (
     <div>
@@ -223,9 +225,12 @@ function CampaignView() {
               </span>
               . Complete payment before the slot is released.
             </span>
-            <button type="button" disabled={paying || Boolean(payBlocked)} onClick={onPay} className="btn btn-lime disabled:opacity-40">
+            <button type="button" disabled={paying || Boolean(payBlocked) || demoCount > 0} onClick={onPay} className="btn btn-lime disabled:opacity-40">
               {paying ? <Loader2 size={15} className="animate-spin" /> : <><CreditCard size={15} /> Complete payment · {fmtUsd(c.total_usd)}</>}
             </button>
+            {demoCount > 0 && (
+              <p className="w-full text-[12px] text-amber-200">{"Demo screens can't be booked yet. Remove them or save as draft."}</p>
+            )}
             {payBlocked && (
               <p className="w-full text-[12px] text-amber-200">{payBlocked} Swap in an approved creative to check out.</p>
             )}
@@ -332,7 +337,10 @@ function CampaignView() {
             {c.screens.map((s) => (
               <div key={s.id} className="flex items-center justify-between py-2.5">
                 <div className="min-w-0">
-                  <div className="text-[14px] text-ink-100 truncate">{s.name}</div>
+                  <div className="text-[14px] text-ink-100 truncate flex items-center gap-2">
+                    <span className="truncate">{s.name}</span>
+                    {s.source === "demo" && <DemoBadge />}
+                  </div>
                   <div className="text-[11px] text-ink-500 capitalize flex items-center gap-1"><MapPin size={11} /> {s.city} · {s.venue_type}</div>
                 </div>
                 <div className="text-[13px] tabular-nums text-ink-200 shrink-0 ml-3">${s.daily_price_usd}/day</div>

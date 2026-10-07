@@ -11,6 +11,7 @@ import { creativeAttachError } from "@/lib/moderation";
 import { useSession } from "@/lib/auth-client";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import BookMap, { type MapFocus, type Viewport } from "@/components/BookMap";
+import { DemoBadge } from "@/components/DemoBadge";
 import { DAYPARTS, daypartMultiplier, daypartSummary, fromPrice } from "@/lib/dayparts";
 import { TemplateBuilder, renderTemplatePng, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
 import {
@@ -283,12 +284,14 @@ export default function BookPage() {
     });
   }
 
-  // Names for a small selection that came from a zone (we only hold ids + prices).
+  // Source and names for a selection that arrived as ids (zone pick). One page is
+  // enough to spot demo inventory; book_screens_by_ids caps at 200.
   useEffect(() => {
-    if (selected.size === 0 || selected.size > 12) return;
+    if (selected.size === 0) return;
     const missing = [...selected.keys()].filter((id) => !meta.has(id));
     if (!missing.length) return;
-    screensByIds(missing).then(remember).catch(() => {});
+    if (selected.size > 200 && selected.size - missing.length >= 200) return;
+    screensByIds(missing.slice(0, 200)).then(remember).catch(() => {});
   }, [selected, meta]);
 
   // Load the library the first time the picker opens
@@ -331,6 +334,11 @@ export default function BookPage() {
   }, [step, creative, tplSpec]);
 
   const selectedIds = useMemo(() => [...selected.keys()], [selected]);
+  const demoCount = selectedIds.filter((id) => meta.get(id)?.source === "demo").length;
+  const reviewScreens = selectedIds
+    .slice(0, 12)
+    .map((id) => meta.get(id))
+    .filter((s): s is Screen => Boolean(s));
   const perDay = useMemo(() => Math.round([...selected.values()].reduce((a, p) => a + p, 0) * 100) / 100, [selected]);
   const days = daysBetween(startDate, endDate);
   const dpMult = daypartMultiplier(dayparts);
@@ -398,6 +406,17 @@ export default function BookPage() {
     setSaving(status === "draft" ? "draft" : "book");
     setSaveErr(null);
     try {
+      if (status === "pending_payment") {
+        // Zone picks arrive as ids. Resolve source before insert so a demo
+        // selection never becomes an orphan draft.
+        const missing = selectedIds.filter((id) => meta.get(id)?.source == null);
+        const fetched = missing.length ? await screensByIds(missing.slice(0, 200)) : [];
+        if (fetched.length) remember(fetched);
+        const hasDemo =
+          selectedIds.some((id) => meta.get(id)?.source === "demo") ||
+          fetched.some((s) => s.source === "demo");
+        if (hasDemo) throw new Error("Demo screens can't be booked yet. Remove them or save as draft.");
+      }
       const cr = await resolveCreative();
       if (cr) {
         const blocked = creativeAttachError(cr, status);
@@ -610,6 +629,7 @@ export default function BookPage() {
                     >
                       <span className={`w-1.5 h-1.5 rounded-full ${isSel ? "bg-cy-300 shadow-[0_0_6px_rgba(34,211,238,0.9)]" : "bg-lime-400 shadow-[0_0_6px_rgba(163,230,53,0.8)]"}`} />
                       {s.name}
+                      {s.source === "demo" && <DemoBadge />}
                       <span className="text-ink-500 tabular-nums">from ${fromPrice(s.daily_price_usd)}/d</span>
                     </button>
                   );
@@ -648,9 +668,10 @@ export default function BookPage() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
                             <Monitor size={14} className={isSel ? "text-cy-300" : "text-ink-400"} />
                             <span className="text-[14px] font-medium text-ink-50 truncate">{s.name}</span>
+                            {s.source === "demo" && <DemoBadge />}
                           </div>
                           <div className="text-[12px] text-ink-400 mt-1 flex items-center gap-1.5 capitalize">
                             <MapPin size={11} /> {s.city} · {s.venue_type} · max {s.max_duration_s}s
@@ -869,9 +890,28 @@ export default function BookPage() {
             <Row label="Creative" value={creative.kind === "none" ? "Attach later" : creative.kind === "upload" ? creative.file.name : creative.kind === "library" ? (creative.creative.name ?? "From library") : `Template · ${tplSpec.preset}`} />
             <Row label="Total" value={fmtUsd(total)} strong />
           </div>
+          {reviewScreens.length > 0 && (
+            <div className="card-tight divide-y divide-line-900">
+              {reviewScreens.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <span className="min-w-0 flex items-center gap-2 text-[13px] text-ink-100">
+                    <span className="truncate">{s.name}</span>
+                    {s.source === "demo" && <DemoBadge />}
+                  </span>
+                  <span className="text-[12px] tabular-nums text-ink-400 shrink-0">${s.daily_price_usd}/day</span>
+                </div>
+              ))}
+              {selected.size > reviewScreens.length && (
+                <div className="px-4 py-2.5 text-[12px] text-ink-500">and {(selected.size - reviewScreens.length).toLocaleString()} more</div>
+              )}
+            </div>
+          )}
           <p className="text-[12px] text-ink-500">
             Booking reserves your screens and dates. You complete payment from the campaign page; nothing is charged until checkout.
           </p>
+          {demoCount > 0 && (
+            <p className="text-[12px] text-amber-200">{"Demo screens can't be booked yet. Remove them or save as draft."}</p>
+          )}
           {saveErr && <p className="text-sm text-red-400">{saveErr}</p>}
         </div>
       )}
@@ -888,7 +928,7 @@ export default function BookPage() {
               {selected.size} screen{selected.size === 1 ? "" : "s"}{days > 0 ? ` · ${fmtUsd(total)}` : ` · ${fmtUsd(perDay)}/day`}
             </span>
           )}
-          {step >= 1 && step < 3 && (
+          {step >= 1 && (step < 3 || demoCount > 0) && (
             <button type="button" disabled={saving !== "idle"} onClick={() => save("draft")} className="btn btn-ghost disabled:opacity-40">
               {saving === "draft" ? <Loader2 size={15} className="animate-spin" /> : "Save draft"}
             </button>
@@ -898,7 +938,7 @@ export default function BookPage() {
               Next <ChevronRight size={15} />
             </button>
           ) : (
-            <button type="button" disabled={saving !== "idle"} onClick={() => save("pending_payment")} className="btn btn-lime disabled:opacity-40">
+            <button type="button" disabled={saving !== "idle" || demoCount > 0} onClick={() => save("pending_payment")} className="btn btn-lime disabled:opacity-40">
               {saving === "book" ? <Loader2 size={15} className="animate-spin" /> : `Book · ${fmtUsd(total)}`}
             </button>
           )}

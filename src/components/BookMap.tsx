@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import type { Screen } from "@/lib/db";
+import { DemoBadge } from "@/components/DemoBadge";
 import { fromPrice } from "@/lib/dayparts";
 import {
   fetchMap, selectPolygon, selectRadius,
@@ -163,7 +164,7 @@ export default function BookMap({
         zIndexOffset: isPinned ? 1000 : 0,
       }).addTo(map);
       marker.bindTooltip(
-        `<div class="glo-tip"><div class="glo-tip-corner">${esc(s.name)}</div>
+        `<div class="glo-tip"><div class="glo-tip-corner">${esc(s.name)}${s.source === "demo" ? '<span class="glo-demo">Demo</span>' : ""}</div>
          <div class="glo-tip-meta">${esc(s.city)} &middot; ${esc(s.venue_type)} &middot; from $${fromPrice(s.daily_price_usd)}/day &middot; tap to select</div></div>`,
         { direction: "top", offset: [0, -16], opacity: 1 },
       );
@@ -518,6 +519,12 @@ export default function BookMap({
         .leaflet-tooltip-top:before { border-top-color: rgba(163, 230, 53, 0.35); }
         .glo-tip-corner { color: #f4f6f8; font-weight: 600; font-size: 13px; }
         .glo-tip-meta { color: #94a3b8; font-size: 11px; margin-top: 2px; }
+        .glo-demo {
+          display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 999px;
+          font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 600;
+          vertical-align: 1px; color: #86ECF7; background: rgba(34,211,238,0.08);
+          border: 1px solid rgba(34,211,238,0.2);
+        }
         .leaflet-container { background: #0a0e13; font: inherit; }
         .leaflet-control-zoom a {
           background: #0d1117 !important; color: #cbd5e1 !important;
@@ -646,7 +653,10 @@ function PinnedCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-[13px] font-semibold text-ink-50 truncate">{s.name}</p>
+          <p className="text-[13px] font-semibold text-ink-50 truncate flex items-center gap-1.5">
+            <span className="truncate">{s.name}</span>
+            {s.source === "demo" && <DemoBadge />}
+          </p>
           <p className="text-[11px] text-ink-400 capitalize">{s.venue_type} · {s.city}</p>
         </div>
         <button type="button" onClick={onClose} aria-label="Close screen details" className="text-ink-500 hover:text-ink-50 text-[16px] leading-none px-1">×</button>
