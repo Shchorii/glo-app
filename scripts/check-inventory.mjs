@@ -27,6 +27,14 @@ async function rpc(fn, body) {
   return { data: await r.json(), ms: Date.now() - t0 };
 }
 
+async function restGet(path) {
+  const r = await fetch(`${URL}/rest/v1/${path}`, {
+    headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, Accept: "application/json" },
+  });
+  if (!r.ok) throw new Error(`GET ${path} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return r.json();
+}
+
 // Williamsburg: a dense local block we expect to stay dense.
 const WBURG = { lat: 40.7045, lng: -73.966 };
 
@@ -56,6 +64,31 @@ check("no screen priced below $29/day", under.length === 0, `${under.length} vio
 // Names are user-visible. No generator artefacts.
 const hashed = rows.filter((s) => /\s+[0-9a-f]{4}$/.test(s.name));
 check("no hash suffixes in names", hashed.length === 0, hashed[0]?.name ?? "");
+
+// Same base-name rule as public.screen_base_name: one trailing " #N".
+const baseName = (name) => String(name ?? "").replace(/\s+#[0-9]+\s*$/, "").trim().toLowerCase();
+const denylist = await restGet("screen_name_denylist?select=base_name&limit=1000");
+const denied = new Set(denylist.map((d) => String(d.base_name).trim().toLowerCase()));
+const deniedHits = rows.filter((s) => denied.has(baseName(s.name)));
+check(
+  "no denylisted real-business names in sample",
+  deniedHits.length === 0,
+  deniedHits[0]?.name ?? ""
+);
+
+// Full inventory. Admin-area patterns live in public.screen_admin_parts and are
+// applied here through the same rejection function the trigger uses.
+const violationCount = await rpc("screen_name_violation_count", {});
+const violations = await rpc("screen_name_violations", { p_limit: 5 });
+const nViolations = Number(violationCount.data);
+const example = Array.isArray(violations.data) && violations.data[0]
+  ? `${violations.data[0].name} (${violations.data[0].reason})`
+  : "";
+check(
+  "no real-business or admin-area names in inventory",
+  nViolations === 0,
+  nViolations ? `${nViolations} e.g. ${example}` : "full table"
+);
 
 // Demo stock must stay flagged, or the UI will claim it is live.
 const unflagged = rows.filter((s) => s.source !== "demo" && s.source !== "live");
