@@ -1,5 +1,14 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { GloMark } from "@/components/Logo";
+import { routeMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = routeMetadata({
+  path: "/",
+  title: { absolute: "Glo Campaign Manager — Neighborhood screen ads, live in 60 seconds" },
+  description: "Make creatives, pick city blocks, and launch cross-screen ad campaigns on neighborhood screens in 60 seconds. Glo Campaign Manager is in closed beta.",
+  index: true,
+});
 
 export default function Home() {
   return (

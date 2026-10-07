@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { routeMetadata } from "@/lib/seo";
 import { dummyCampaign } from "@/lib/dummy-data";
 import { redirect } from "next/navigation";
 
@@ -5,6 +7,11 @@ export function generateStaticParams() {
   return [{ id: "camp_jp_001" }];
 }
 export const dynamicParams = false;
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  return routeMetadata({ path: `/campaigns/${id}/`, title: "Campaign" });
+}
 
 export default async function CampaignDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
