@@ -4,6 +4,7 @@
  * Database-backed screen picking for /book. Every call is bounded server-side:
  * the browser never holds more than ~500 map items or 120 list rows at a time.
  * SQL lives in supabase/migrations/0010_book_at_scale.sql.
+ * Place-search ranking is 0013_book_place_search_exact_first.sql.
  */
 import { getSupabase } from "@/lib/supabase";
 import type { Screen } from "@/lib/db";
@@ -31,6 +32,16 @@ export type VenueOption = { venue_type: string; n: number };
 export type PlaceHit = {
   kind: "neighborhood" | "city"; label: string; city: string; n: number;
   min_lat: number; min_lng: number; max_lat: number; max_lng: number;
+};
+
+/**
+ * Best hit is the top-level object, so a client from before the suggestion
+ * dropdown still jumps. `alternatives` is the next ranked places (at most 8).
+ * `ambiguous` asks the UI to show them instead of jumping.
+ */
+export type PlaceSearch = PlaceHit & {
+  ambiguous?: boolean;
+  alternatives?: PlaceHit[];
 };
 
 export type Filters = { city: string | null; venue: string | null };
@@ -74,7 +85,7 @@ export function fetchFilters(city: string | null) {
 }
 
 export function searchPlace(q: string) {
-  return call<PlaceHit | null>("book_place_search", { q });
+  return call<PlaceSearch | null>("book_place_search", { q });
 }
 
 export function screensByIds(ids: string[]) {

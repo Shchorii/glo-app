@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -21,7 +21,7 @@ import {
 import { ZIP_CENTROIDS } from "@/lib/zip-centroids";
 import {
   bboxAround, fetchFilters, fetchList, screensByIds, searchPlace,
-  type AreaResult, type Bbox, type CityOption, type VenueOption,
+  type AreaResult, type Bbox, type CityOption, type PlaceHit, type PlaceSearch, type VenueOption,
 } from "@/lib/book-api";
 
 const STEPS = ["Screens", "Dates", "Creative", "Review"] as const;
@@ -35,6 +35,13 @@ const LOCAL_ZOOM = 13;
 const LIST_PAGE = 60;
 
 type SearchHit = { kind: "zip" | "city" | "neighborhood"; label: string; n: number };
+
+function asPlace(p: PlaceSearch): PlaceHit {
+  return {
+    kind: p.kind, label: p.label, city: p.city, n: p.n,
+    min_lat: p.min_lat, min_lng: p.min_lng, max_lat: p.max_lat, max_lng: p.max_lng,
+  };
+}
 
 function zoomForBounds(b: Bbox) {
   const span = Math.max(b.maxLat - b.minLat, (b.maxLng - b.minLng) * 0.8, 0.005);
@@ -65,6 +72,10 @@ export default function BookPage() {
   const [query, setQuery] = useState("");
   const [hit, setHit] = useState<SearchHit | null>(null);
   const [noMatch, setNoMatch] = useState(false);
+  const [suggestions, setSuggestions] = useState<PlaceHit[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [activeSuggest, setActiveSuggest] = useState(0);
+  const searchWrapRef = useRef<HTMLDivElement>(null);
   const [origin, setOrigin] = useState<{ lat: number; lng: number; label: string } | null>(null);
   const [totalNear, setTotalNear] = useState<number | null>(null);
   /** Set when the advertiser's own location had no inventory and we fell back. */
@@ -201,6 +212,12 @@ export default function BookPage() {
     setListPage(0);
   }
 
+  function choosePlace(p: PlaceHit) {
+    pointMap({ bounds: { minLat: p.min_lat, minLng: p.min_lng, maxLat: p.max_lat, maxLng: p.max_lng } });
+    setHit({ kind: p.kind, label: p.label, n: p.n });
+    setSuggestOpen(false);
+  }
+
   function chooseCity(next: string | null) {
     setCity(next);
     setListPage(0);
@@ -219,15 +236,23 @@ export default function BookPage() {
   }, [city, cityOpts, origin]);
 
   // Free-text search: 5-digit ZIP, neighborhood or city. Resolved server-side.
+  // An ambiguous place query opens suggestions instead of moving the map.
   useEffect(() => {
     const q = query.trim();
     setNoMatch(false);
-    if (!q) { setHit(null); return; }
+    setSuggestOpen(false);
+    setSuggestions([]);
+    if (!q) {
+      setHit(null);
+      return;
+    }
     if (!origin) return;
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
         if (/^\d{5}$/.test(q)) {
+          setSuggestions([]);
+          setSuggestOpen(false);
           const c = ZIP_CENTROIDS[q];
           if (!c) { if (!cancelled) { setHit(null); setNoMatch(true); } return; }
           pointMap({ center: [c[0], c[1]], zoom: 14 });
@@ -235,19 +260,79 @@ export default function BookPage() {
           if (!cancelled) setHit({ kind: "zip", label: q, n });
           return;
         }
-        if (q.length < 2) return;
+        if (q.length < 2) {
+          if (!cancelled) { setSuggestions([]); setSuggestOpen(false); }
+          return;
+        }
         const p = await searchPlace(q);
         if (cancelled) return;
-        if (!p) { setHit(null); setNoMatch(true); return; }
-        pointMap({ bounds: { minLat: p.min_lat, minLng: p.min_lng, maxLat: p.max_lat, maxLng: p.max_lng } });
-        setHit({ kind: p.kind, label: p.label, n: p.n });
+        if (!p) {
+          setHit(null);
+          setNoMatch(true);
+          setSuggestions([]);
+          setSuggestOpen(false);
+          return;
+        }
+        const options = [asPlace(p), ...(p.alternatives ?? [])];
+        if (p.ambiguous && options.length > 1) {
+          setHit(null);
+          setSuggestions(options);
+          setActiveSuggest(0);
+          setSuggestOpen(true);
+          return;
+        }
+        setSuggestions([]);
+        setSuggestOpen(false);
+        choosePlace(asPlace(p));
       } catch {
-        if (!cancelled) { setHit(null); setNoMatch(true); }
+        if (!cancelled) {
+          setHit(null);
+          setNoMatch(true);
+          setSuggestions([]);
+          setSuggestOpen(false);
+        }
       }
     }, 400);
     return () => { cancelled = true; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, origin]);
+
+  useEffect(() => {
+    if (!suggestOpen) return;
+    function onPointerDown(e: MouseEvent) {
+      if (!searchWrapRef.current?.contains(e.target as Node)) setSuggestOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [suggestOpen]);
+
+  useEffect(() => {
+    if (!suggestOpen) return;
+    document.getElementById(`place-opt-${activeSuggest}`)?.scrollIntoView({ block: "nearest" });
+  }, [suggestOpen, activeSuggest]);
+
+  function onSearchKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Escape") {
+      if (!suggestOpen) return;
+      e.preventDefault();
+      setSuggestOpen(false);
+      return;
+    }
+    if (!suggestions.length) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!suggestOpen) { setSuggestOpen(true); setActiveSuggest(0); return; }
+      setActiveSuggest((i) => (i + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!suggestOpen) { setSuggestOpen(true); setActiveSuggest(suggestions.length - 1); return; }
+      setActiveSuggest((i) => (i - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === "Enter" && suggestOpen) {
+      e.preventDefault();
+      const pick = suggestions[activeSuggest] ?? suggestions[0];
+      if (pick) choosePlace(pick);
+    }
+  }
 
   const listArea: Bbox | null = area ?? (origin ? bboxAround(origin.lat, origin.lng, RADIUS_M) : null);
   const filters = useMemo(() => ({ city, venue }), [city, venue]);
@@ -498,13 +583,27 @@ export default function BookPage() {
         <div>
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div className="flex flex-wrap gap-2 items-center">
-              <div className="relative">
+              <div className="relative z-[1100]" ref={searchWrapRef}>
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-500 pointer-events-none" />
                 <input
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setHit(null);
+                    setNoMatch(false);
+                    setSuggestions([]);
+                    setSuggestOpen(false);
+                  }}
+                  onKeyDown={onSearchKeyDown}
+                  onFocus={() => { if (suggestions.length > 1) setSuggestOpen(true); }}
                   placeholder="ZIP, neighborhood or city"
                   aria-label="Search screens by ZIP code, neighborhood or city"
+                  role="combobox"
+                  aria-expanded={suggestOpen}
+                  aria-controls="place-suggestions"
+                  aria-autocomplete="list"
+                  aria-activedescendant={suggestOpen ? `place-opt-${activeSuggest}` : undefined}
+                  autoComplete="off"
                   className="w-[230px] pl-8 pr-7 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100 placeholder:text-ink-600 focus:outline-none focus:border-cy-400/50"
                 />
                 {query && (
@@ -516,6 +615,40 @@ export default function BookPage() {
                   >
                     <X size={13} />
                   </button>
+                )}
+                {suggestOpen && suggestions.length > 1 && (
+                  <ul
+                    id="place-suggestions"
+                    role="listbox"
+                    aria-label="Place suggestions"
+                    data-testid="place-suggestions"
+                    className="absolute left-0 top-full z-[1100] mt-1 max-h-72 w-[min(340px,calc(100vw-2rem))] overflow-auto rounded-lg border border-line-800 bg-bg-900 py-1 shadow-[0_6px_24px_rgba(0,0,0,0.5)]"
+                  >
+                    {suggestions.map((s, i) => (
+                      <li key={`${s.kind}:${s.city}:${s.label}`} role="presentation">
+                        <button
+                          type="button"
+                          id={`place-opt-${i}`}
+                          role="option"
+                          aria-selected={i === activeSuggest}
+                          onMouseEnter={() => setActiveSuggest(i)}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => choosePlace(s)}
+                          className={`flex w-full items-baseline justify-between gap-3 px-3 py-2 text-left text-[13px] ${
+                            i === activeSuggest ? "bg-bg-800 text-ink-100" : "text-ink-200 hover:bg-bg-800"
+                          }`}
+                        >
+                          <span className="min-w-0 truncate">
+                            <span className="text-ink-100">{s.label}</span>
+                            <span className="text-ink-500">
+                              {" "}· {s.kind === "city" ? "city" : `neighborhood · ${s.city}`}
+                            </span>
+                          </span>
+                          <span className="shrink-0 tabular-nums text-ink-400">{s.n.toLocaleString()}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
               <select
