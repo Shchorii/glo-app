@@ -539,7 +539,7 @@ export default function BookPage() {
           <CheckCircle2 size={40} className="mx-auto text-lime-300 mb-4" />
           <h2 className="text-xl font-semibold text-ink-50 mb-2">Campaign saved</h2>
           <p className="text-sm text-ink-400 mb-1">
-            {selected.size} screen{selected.size === 1 ? "" : "s"} · {days} day{days === 1 ? "" : "s"} · {fmtUsd(total)}
+            {selected.size.toLocaleString()} screen{selected.size === 1 ? "" : "s"} · {days} day{days === 1 ? "" : "s"} · {fmtUsd(total)}
           </p>
           <p className="text-sm text-ink-400 mb-6">
             Your screens are held for 5 minutes. Complete payment now to lock them in; unpaid reservations release automatically.
@@ -556,13 +556,13 @@ export default function BookPage() {
   return (
     <Shell demo={!viewport?.live}>
       {/* Stepper */}
-      <div className="flex items-center gap-1.5 sm:gap-3 mb-6 overflow-x-auto pb-1">
+      <div className="grid grid-cols-4 gap-1 sm:flex sm:items-center sm:gap-3 mb-6">
         {STEPS.map((label, i) => (
           <button
             key={label}
             type="button"
             onClick={() => i < step && setStep(i)}
-            className={`flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-full text-[12px] font-medium border ${
+            className={`flex items-center justify-center gap-0.5 min-w-0 px-0.5 py-1.5 sm:justify-start sm:gap-1.5 sm:shrink-0 sm:px-2.5 rounded-full text-[12px] font-medium border ${
               i === step
                 ? "bg-cy-400/15 text-cy-300 border-cy-400/40"
                 : i < step
@@ -570,10 +570,10 @@ export default function BookPage() {
                 : "text-ink-500 border-line-900"
             }`}
           >
-            <span className={`w-4.5 h-4.5 w-5 h-5 rounded-full text-[10px] flex items-center justify-center ${
+            <span className={`w-5 h-5 shrink-0 rounded-full text-[10px] flex items-center justify-center ${
               i <= step ? "bg-bg-900" : "bg-bg-900/50"
             }`}>{i + 1}</span>
-            {label}
+            <span className="truncate min-w-0">{label}</span>
           </button>
         ))}
       </div>
@@ -812,7 +812,7 @@ export default function BookPage() {
                         </div>
                         <div className="text-right shrink-0">
                           <div className="text-[15px] font-semibold text-ink-50 tabular-nums">{fmtUsd(s.daily_price_usd)}/day</div>
-                          <div className="text-[10px] text-ink-500">from ${lateNightFrom(s.daily_price_usd)} · late night</div>
+                          <div className="text-[10px] text-ink-500">from {fmtUsd(lateNightFrom(s.daily_price_usd))} · late night</div>
                         </div>
                       </div>
                       {isSel && <div className="mt-2 text-[11px] text-cy-300 flex items-center gap-1"><CheckCircle2 size={12} /> Selected</div>}
@@ -1017,7 +1017,7 @@ export default function BookPage() {
             </div>
           )}
           <div className="card-tight divide-y divide-line-900">
-            <Row label="Screens" value={`${selected.size} selected · ${fmtUsd(perDay)}/day`} />
+            <Row label="Screens" value={`${selected.size.toLocaleString()} selected · ${fmtUsd(perDay)}/day`} />
             <Row label="Flight" value={`${startDate} → ${endDate} · ${days} day${days === 1 ? "" : "s"}`} />
             <Row label="Timing" value={daypartSummary(dayparts)} />
             <Row label="Creative" value={creative.kind === "none" ? "Attach later" : creative.kind === "upload" ? creative.file.name : creative.kind === "library" ? (creative.creative.name ?? "From library") : `Template · ${tplSpec.preset}`} />
@@ -1031,7 +1031,7 @@ export default function BookPage() {
                     <span className="truncate">{s.name}</span>
                     {s.source === "demo" && <DemoBadge />}
                   </span>
-                  <span className="text-[12px] tabular-nums text-ink-400 shrink-0">${s.daily_price_usd}/day</span>
+                  <span className="text-[12px] tabular-nums text-ink-400 shrink-0">{fmtUsd(s.daily_price_usd)}/day</span>
                 </div>
               ))}
               {selected.size > reviewScreens.length && (
@@ -1058,7 +1058,9 @@ export default function BookPage() {
         <div className="flex items-center gap-3">
           {selected.size > 0 && (
             <span className="hidden sm:block text-[13px] text-ink-400 tabular-nums">
-              {selected.size} screen{selected.size === 1 ? "" : "s"}{days > 0 ? ` · ${fmtUsd(total)}` : ` · ${fmtUsd(perDay)}/day`}
+              {step === 0
+                ? `${selected.size.toLocaleString()} screen${selected.size === 1 ? "" : "s"} · ${fmtUsd(perDay)}/day`
+                : `${selected.size.toLocaleString()} screen${selected.size === 1 ? "" : "s"} · ${days} day${days === 1 ? "" : "s"} · ${fmtUsd(total)}`}
             </span>
           )}
           {step >= 1 && (step < 3 || demoCount > 0) && (
