@@ -729,6 +729,25 @@ export async function renderAllRatios(spec: TemplateSpec): Promise<Record<RatioI
   return out;
 }
 
+/**
+ * Every ratio EXCEPT 9:16, shaped for addCreativeRenditions.
+ *
+ * 9:16 is skipped because it is already the parent creative: uploading it
+ * again would store the same bytes twice and give moderation two rows to
+ * reconcile for one design.
+ */
+export async function renderExtraRatios(
+  spec: TemplateSpec,
+): Promise<{ ratio: RatioId; blob: Blob; width: number; height: number }[]> {
+  const out: { ratio: RatioId; blob: Blob; width: number; height: number }[] = [];
+  for (const id of RATIO_IDS) {
+    if (id === "9:16") continue;
+    const size = RATIOS[id];
+    out.push({ ratio: id, blob: await renderTemplatePng(spec, size), width: size.w, height: size.h });
+  }
+  return out;
+}
+
 function readAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();

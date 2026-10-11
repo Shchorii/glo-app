@@ -3,8 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { TemplateBuilder, renderTemplatePng, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
-import { uploadCreative } from "@/lib/db";
+import { TemplateBuilder, renderTemplatePng, renderExtraRatios, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
+import { uploadCreative, addCreativeRenditions } from "@/lib/db";
 import { useSession } from "@/lib/auth-client";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { ArrowLeft, Loader2, CheckCircle2, ArrowRight, Save } from "lucide-react";
@@ -29,6 +29,7 @@ export default function StudioCreatePage() {
   async function onSave() {
     setSaving(true); setErr(null);
     try {
+      // Parent stays 9:16: moderation and campaign attachment key off it.
       const blob = await renderTemplatePng(spec);
       const c = await uploadCreative(blob, {
         source: "template",
@@ -37,6 +38,9 @@ export default function StudioCreatePage() {
         width: CANVAS_W,
         height: CANVAS_H,
       });
+      // IDA-28: also store the landscape and square renders. Best effort, so
+      // a failure here still leaves the saved creative usable.
+      await addCreativeRenditions(c.id, await renderExtraRatios(spec));
       setSavedId(c.id);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

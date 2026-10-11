@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  countScreensNear, createCampaign, uploadCreative, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
+  countScreensNear, createCampaign, uploadCreative, addCreativeRenditions, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
   type Screen, type Creative,
 } from "@/lib/db";
 import { creativeAttachError } from "@/lib/moderation";
@@ -13,7 +13,7 @@ import { isSupabaseConfigured } from "@/lib/supabase";
 import BookMap, { type MapFocus, type Viewport } from "@/components/BookMap";
 import { DemoBadge } from "@/components/DemoBadge";
 import { DAYPARTS, daypartMultiplier, daypartSummary, lateNightFrom } from "@/lib/dayparts";
-import { TemplateBuilder, renderTemplatePng, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
+import { TemplateBuilder, renderTemplatePng, renderExtraRatios, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
 import {
   MapPin, List, Map as MapIcon, Monitor, Calendar, ImagePlus, Wand2, FolderOpen,
   ChevronLeft, ChevronRight, Loader2, CheckCircle2, Upload, Search, X,
@@ -481,8 +481,20 @@ export default function BookPage() {
       return await uploadCreative(file, { source: "upload", ext });
     }
     if (creative.kind === "template") {
+      // The parent creative stays the 9:16 render: moderation and campaign
+      // attachment both key off it, so that path is unchanged.
       const blob = await renderTemplatePng(tplSpec);
-      return await uploadCreative(blob, { source: "template", ext: "png", width: CANVAS_W, height: CANVAS_H });
+      const created = await uploadCreative(blob, {
+        source: "template", ext: "png", width: CANVAS_W, height: CANVAS_H,
+      });
+      // IDA-28: 80% of inventory is landscape, so render the other ratios too.
+      // Best effort by design, and awaited only so a slow upload cannot race
+      // the campaign insert. A failure here leaves the 9:16 creative usable.
+      await addCreativeRenditions(
+        created.id,
+        await renderExtraRatios(tplSpec),
+      );
+      return created;
     }
     return null;
   }

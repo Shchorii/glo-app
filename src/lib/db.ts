@@ -267,6 +267,74 @@ export async function uploadCreative(
   return data as Creative;
 }
 
+export type CreativeRendition = {
+  id: string;
+  creative_id: string;
+  ratio: string;
+  storage_path: string;
+  width_px: number;
+  height_px: number;
+  created_at: string;
+};
+
+/**
+ * Attach extra aspect-ratio renders to a creative that already exists.
+ *
+ * IDA-28. The parent creative stays the 9:16 render and the single source of
+ * truth for moderation and campaign attachment; these are additional files
+ * for screens whose shape differs (80% of inventory is landscape).
+ *
+ * BEST EFFORT ON PURPOSE. A booking must never fail because a secondary
+ * render did not upload, so every error here is swallowed and reported in the
+ * return value rather than thrown. The caller already holds a usable creative
+ * by the time this runs. Returns the ratios that landed.
+ */
+export async function addCreativeRenditions(
+  creativeId: string,
+  renders: { ratio: string; blob: Blob; width: number; height: number }[],
+): Promise<{ saved: string[]; failed: string[] }> {
+  const saved: string[] = [];
+  const failed: string[] = [];
+  const client = sb();
+  const { data: auth } = await client.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) return { saved, failed: renders.map((r) => r.ratio) };
+
+  for (const r of renders) {
+    try {
+      const path = `${uid}/${crypto.randomUUID()}.png`;
+      const { error: upErr } = await client.storage
+        .from("creatives")
+        .upload(path, r.blob, { contentType: r.blob.type || "image/png", upsert: false });
+      if (upErr) throw upErr;
+
+      const { error } = await client.from("creative_renditions").insert({
+        creative_id: creativeId,
+        ratio: r.ratio,
+        storage_path: path,
+        width_px: r.width,
+        height_px: r.height,
+      });
+      if (error) throw error;
+      saved.push(r.ratio);
+    } catch {
+      failed.push(r.ratio);
+    }
+  }
+  return { saved, failed };
+}
+
+/** Renditions of a creative, for previewing what each screen shape will show. */
+export async function listCreativeRenditions(creativeId: string): Promise<CreativeRendition[]> {
+  const { data, error } = await sb()
+    .from("creative_renditions")
+    .select("*")
+    .eq("creative_id", creativeId)
+    .order("ratio");
+  if (error) throw error;
+  return (data ?? []) as CreativeRendition[];
+}
+
 /** Attach a creative to a campaign. Paid/live require approved; rejected is always blocked. */
 export async function attachCampaignCreative(campaignId: string, creative: Creative, campaignStatus: CampaignStatus): Promise<void> {
   const blocked = creativeAttachError(creative, campaignStatus);
