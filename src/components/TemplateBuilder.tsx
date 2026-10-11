@@ -25,6 +25,19 @@ export type TemplateSpec = {
 
 type Layout = "center" | "lower" | "left";
 
+export type CanvasSize = { w: number; h: number };
+
+export type RatioId = "16:9" | "9:16" | "1:1" | "4:3";
+
+export const RATIOS: Record<RatioId, CanvasSize> = {
+  "16:9": { w: 1920, h: 1080 },
+  "9:16": { w: 1080, h: 1920 },
+  "1:1":  { w: 1080, h: 1080 },
+  "4:3":  { w: 1440, h: 1080 },
+};
+
+export const RATIO_IDS: RatioId[] = ["16:9", "9:16", "1:1", "4:3"];
+
 type TemplateDef = {
   id: TemplateId;
   label: string;
@@ -34,7 +47,7 @@ type TemplateDef = {
   accentDefault: string;
   darkText: boolean;   // headline/sub in near-black instead of white
   grain: number;       // 0..1 film grain strength
-  paint: (ctx: CanvasRenderingContext2D, spec: TemplateSpec) => void;
+  paint: (ctx: CanvasRenderingContext2D, spec: TemplateSpec, size: CanvasSize, u: number) => void;
 };
 
 const FONTS: { id: FontId; label: string; stack: string; upper: boolean }[] = [
@@ -45,9 +58,62 @@ const FONTS: { id: FontId; label: string; stack: string; upper: boolean }[] = [
 
 const SWATCHES = ["#22D3EE", "#A3E635", "#F472B6", "#FBBF24", "#A78BFA", "#F87171"];
 
-export const CANVAS_W = 1080;
-export const CANVAS_H = 1920;
+/**
+ * Legacy portrait constants. Kept exported so existing importers (the /book and
+ * /studio flows, which still upload a single 9:16 rendition) keep compiling.
+ */
+export const CANVAS_W = RATIOS["9:16"].w;
+export const CANVAS_H = RATIOS["9:16"].h;
+
 const MAX_IMG_MB = 4;
+
+/**
+ * The scaling unit every former hardcoded pixel value is multiplied by.
+ *
+ * The whole design was hand-tuned against 1080x1920, so each absolute value in
+ * here is really "n units at a 1080 short edge". Keying the unit to the SHORT
+ * edge (rather than width, height or the diagonal) is what keeps type weight
+ * and margins feeling the same in portrait and landscape: a 128u headline reads
+ * the same on 1080x1920 as on 1920x1080.
+ *
+ * Note min(1080, 1920) / 1080 === 1, so u is exactly 1 for 9:16 and therefore
+ * every 9:16 render must stay byte-identical to the pre-refactor output. All
+ * four shipped RATIOS have a 1080 short edge, so u only departs from 1 when
+ * callers ask for a smaller or larger canvas (thumbnails, hi-dpi exports).
+ */
+function unitOf(size: CanvasSize): number {
+  return Math.min(size.w, size.h) / 1080;
+}
+
+/**
+ * Horizontal inset for a value tuned at 1080 wide.
+ *
+ * Pure u scaling leaves wide canvases looking cramped: 90u of side margin is
+ * 8.3% of a portrait width but only 4.7% of a 1920 landscape width, so the type
+ * runs almost to the bezel. The floor below expresses the margin as a share of
+ * the actual width instead, and max() picks whichever is roomier. The share is
+ * calibrated so insetX(90) === max(90u, w * 0.055).
+ *
+ * At 9:16 the floor evaluates to 0.66 * base while base * u is base, so max()
+ * always returns base. That is why 9:16 geometry is untouched by this rule.
+ */
+function insetX(base: number, size: CanvasSize): number {
+  return Math.max(base * unitOf(size), size.w * 0.055 * (base / 90));
+}
+
+/**
+ * Top edge of the footer bar.
+ *
+ * Was the literal 1560 on a 1920-tall canvas: a 210 tall bar leaving 150 of
+ * clearance for the watermark below it. Anchoring to the BOTTOM edge rather
+ * than scaling 1560 by u is what keeps the bar on-canvas in landscape, where
+ * 1560u would fall past a 1080 bottom edge entirely.
+ */
+function footerTopOf(size: CanvasSize, u: number): number {
+  return size.h - 360 * u;
+}
+
+const FOOTER_H_BASE = 210;
 
 /* ---------------- color helpers ---------------- */
 
@@ -92,9 +158,12 @@ function shiftHue(hex: string, deg: number): string {
 
 /* ---------------- texture helpers ---------------- */
 
-function grainOverlay(ctx: CanvasRenderingContext2D, strength: number) {
+function grainOverlay(ctx: CanvasRenderingContext2D, strength: number, size: CanvasSize, u: number) {
   if (strength <= 0) return;
-  const gw = 180, gh = 320;
+  // The noise tile is stretched over the whole canvas, so scaling the tile with
+  // u is what keeps the visible speckle the same physical size at any output.
+  const gw = Math.max(1, Math.round(180 * u));
+  const gh = Math.max(1, Math.round(320 * u));
   const off = document.createElement("canvas");
   off.width = gw; off.height = gh;
   const octx = off.getContext("2d");
@@ -110,24 +179,24 @@ function grainOverlay(ctx: CanvasRenderingContext2D, strength: number) {
   ctx.globalAlpha = strength;
   ctx.globalCompositeOperation = "overlay";
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(off, 0, 0, CANVAS_W, CANVAS_H);
+  ctx.drawImage(off, 0, 0, size.w, size.h);
   ctx.restore();
 }
 
-function orb(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, alpha: number) {
+function orb(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, alpha: number, size: CanvasSize) {
   const g = ctx.createRadialGradient(x, y, 0, x, y, r);
   g.addColorStop(0, hexA(color, alpha));
   g.addColorStop(1, hexA(color, 0));
   ctx.fillStyle = g;
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  ctx.fillRect(0, 0, size.w, size.h);
 }
 
-function darkGradient(ctx: CanvasRenderingContext2D, top: string, bottom: string) {
-  const g = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+function darkGradient(ctx: CanvasRenderingContext2D, top: string, bottom: string, size: CanvasSize) {
+  const g = ctx.createLinearGradient(0, 0, 0, size.h);
   g.addColorStop(0, top);
   g.addColorStop(1, bottom);
   ctx.fillStyle = g;
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  ctx.fillRect(0, 0, size.w, size.h);
 }
 
 /* ---------------- template catalog ---------------- */
@@ -136,163 +205,166 @@ const TEMPLATES: TemplateDef[] = [
   {
     id: "glow", label: "Neon", hint: "Dark, neon, night-street energy",
     layout: "center", fontDefault: "modern", accentDefault: "#22D3EE", darkText: false, grain: 0.06,
-    paint: (ctx, spec) => {
-      darkGradient(ctx, "#070b14", "#0d1524");
-      orb(ctx, CANVAS_W / 2, CANVAS_H * 0.78, 700, spec.accent, 0.5);
+    paint: (ctx, spec, size, u) => {
+      darkGradient(ctx, "#070b14", "#0d1524", size);
+      orb(ctx, size.w / 2, size.h * 0.78, 700 * u, spec.accent, 0.5, size);
       ctx.strokeStyle = hexA(spec.accent, 0.9);
-      ctx.lineWidth = 10;
-      ctx.strokeRect(45, 45, CANVAS_W - 90, CANVAS_H - 90);
+      ctx.lineWidth = 10 * u;
+      ctx.strokeRect(45 * u, 45 * u, size.w - 90 * u, size.h - 90 * u);
     },
   },
   {
     id: "midnight", label: "Midnight", hint: "Deep black, soft glow orbs, grain",
     layout: "center", fontDefault: "modern", accentDefault: "#A78BFA", darkText: false, grain: 0.09,
-    paint: (ctx, spec) => {
-      darkGradient(ctx, "#04060b", "#090d16");
-      orb(ctx, CANVAS_W * 0.85, CANVAS_H * 0.16, 560, spec.accent, 0.45);
-      orb(ctx, CANVAS_W * 0.1, CANVAS_H * 0.9, 640, shiftHue(spec.accent, 40), 0.28);
+    paint: (ctx, spec, size, u) => {
+      darkGradient(ctx, "#04060b", "#090d16", size);
+      orb(ctx, size.w * 0.85, size.h * 0.16, 560 * u, spec.accent, 0.45, size);
+      orb(ctx, size.w * 0.1, size.h * 0.9, 640 * u, shiftHue(spec.accent, 40), 0.28, size);
       ctx.strokeStyle = hexA("#ffffff", 0.14);
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 * u;
       ctx.beginPath();
-      ctx.arc(CANVAS_W * 0.85, CANVAS_H * 0.16, 250, 0, Math.PI * 2);
+      ctx.arc(size.w * 0.85, size.h * 0.16, 250 * u, 0, Math.PI * 2);
       ctx.stroke();
     },
   },
   {
     id: "mesh", label: "Mesh", hint: "Blurry gradient blobs, very now",
     layout: "center", fontDefault: "modern", accentDefault: "#F472B6", darkText: false, grain: 0.07,
-    paint: (ctx, spec) => {
-      darkGradient(ctx, "#0a0a12", "#12101c");
-      orb(ctx, CANVAS_W * 0.2, CANVAS_H * 0.22, 620, spec.accent, 0.6);
-      orb(ctx, CANVAS_W * 0.9, CANVAS_H * 0.45, 560, shiftHue(spec.accent, 60), 0.5);
-      orb(ctx, CANVAS_W * 0.4, CANVAS_H * 0.9, 700, shiftHue(spec.accent, -50), 0.45);
-      orb(ctx, CANVAS_W * 0.75, CANVAS_H * 0.8, 380, "#ffffff", 0.1);
+    paint: (ctx, spec, size, u) => {
+      darkGradient(ctx, "#0a0a12", "#12101c", size);
+      orb(ctx, size.w * 0.2, size.h * 0.22, 620 * u, spec.accent, 0.6, size);
+      orb(ctx, size.w * 0.9, size.h * 0.45, 560 * u, shiftHue(spec.accent, 60), 0.5, size);
+      orb(ctx, size.w * 0.4, size.h * 0.9, 700 * u, shiftHue(spec.accent, -50), 0.45, size);
+      orb(ctx, size.w * 0.75, size.h * 0.8, 380 * u, "#ffffff", 0.1, size);
     },
   },
   {
     id: "sunset", label: "Sunset", hint: "Warm gradient, sun disc, horizon",
     layout: "center", fontDefault: "editorial", accentDefault: "#FBBF24", darkText: false, grain: 0.08,
-    paint: (ctx, spec) => {
-      const g = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    paint: (ctx, spec, size, u) => {
+      const g = ctx.createLinearGradient(0, 0, 0, size.h);
       g.addColorStop(0, shiftHue(spec.accent, -18));
       g.addColorStop(0.55, shiftHue(spec.accent, 12));
       g.addColorStop(1, "#100a14");
       ctx.fillStyle = g;
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+      ctx.fillRect(0, 0, size.w, size.h);
       // sun disc
       ctx.fillStyle = hexA("#ffffff", 0.85);
       ctx.beginPath();
-      ctx.arc(CANVAS_W / 2, CANVAS_H * 0.3, 200, 0, Math.PI * 2);
+      ctx.arc(size.w / 2, size.h * 0.3, 200 * u, 0, Math.PI * 2);
       ctx.fill();
-      orb(ctx, CANVAS_W / 2, CANVAS_H * 0.3, 480, "#ffffff", 0.35);
+      orb(ctx, size.w / 2, size.h * 0.3, 480 * u, "#ffffff", 0.35, size);
       // horizon lines
       ctx.strokeStyle = hexA("#100a14", 0.35);
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 4 * u;
       for (let i = 0; i < 5; i++) {
-        const y = CANVAS_H * 0.30 + 60 + i * 26;
-        ctx.beginPath(); ctx.moveTo(CANVAS_W / 2 - 210, y); ctx.lineTo(CANVAS_W / 2 + 210, y); ctx.stroke();
+        const y = size.h * 0.30 + 60 * u + i * 26 * u;
+        ctx.beginPath(); ctx.moveTo(size.w / 2 - 210 * u, y); ctx.lineTo(size.w / 2 + 210 * u, y); ctx.stroke();
       }
     },
   },
   {
     id: "poster", label: "Poster", hint: "Swiss grid, giant type, diagonal band",
     layout: "left", fontDefault: "modern", accentDefault: "#F87171", darkText: true, grain: 0.05,
-    paint: (ctx, spec) => {
+    paint: (ctx, spec, size, u) => {
       ctx.fillStyle = "#f2efe8";
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-      // diagonal accent band
+      ctx.fillRect(0, 0, size.w, size.h);
+      // diagonal accent band. 2400u of length still overshoots the diagonal of
+      // every shipped ratio, so the band runs off both edges as designed.
       ctx.save();
-      ctx.translate(CANVAS_W * 0.72, CANVAS_H * 0.2);
+      ctx.translate(size.w * 0.72, size.h * 0.2);
       ctx.rotate(0.5);
       ctx.fillStyle = spec.accent;
-      ctx.fillRect(-140, -900, 240, 2400);
+      ctx.fillRect(-140 * u, -900 * u, 240 * u, 2400 * u);
       ctx.restore();
-      // grid ticks
+      // grid ticks, started at the same inset as the headline so they stay tied to it
       ctx.strokeStyle = "rgba(18,21,28,0.25)";
-      ctx.lineWidth = 3;
-      for (let x = 90; x < CANVAS_W; x += 150) {
-        ctx.beginPath(); ctx.moveTo(x, 70); ctx.lineTo(x, 100); ctx.stroke();
+      ctx.lineWidth = 3 * u;
+      for (let x = insetX(90, size); x < size.w; x += 150 * u) {
+        ctx.beginPath(); ctx.moveTo(x, 70 * u); ctx.lineTo(x, 100 * u); ctx.stroke();
       }
       // index number
       ctx.fillStyle = "#12151c";
-      ctx.font = "800 64px system-ui, -apple-system, 'Segoe UI', sans-serif";
+      ctx.font = `800 ${64 * u}px system-ui, -apple-system, 'Segoe UI', sans-serif`;
       ctx.textAlign = "right";
-      ctx.fillText("N\u00ba 01", CANVAS_W - 80, 140);
+      ctx.fillText("N\u00ba 01", size.w - insetX(80, size), 140 * u);
       ctx.textAlign = "center";
     },
   },
   {
     id: "ticket", label: "Ticket", hint: "Perforated coupon, redeem energy",
     layout: "center", fontDefault: "typewriter", accentDefault: "#A3E635", darkText: false, grain: 0.07,
-    paint: (ctx, spec) => {
-      darkGradient(ctx, "#0b0e14", "#11151d");
+    paint: (ctx, spec, size, u) => {
+      darkGradient(ctx, "#0b0e14", "#11151d", size);
       // outer accent frame
       ctx.strokeStyle = spec.accent;
-      ctx.lineWidth = 14;
-      ctx.strokeRect(60, 60, CANVAS_W - 120, CANVAS_H - 120);
+      ctx.lineWidth = 14 * u;
+      ctx.strokeRect(60 * u, 60 * u, size.w - 120 * u, size.h - 120 * u);
       ctx.strokeStyle = hexA(spec.accent, 0.5);
-      ctx.lineWidth = 3;
-      ctx.strokeRect(92, 92, CANVAS_W - 184, CANVAS_H - 184);
+      ctx.lineWidth = 3 * u;
+      ctx.strokeRect(92 * u, 92 * u, size.w - 184 * u, size.h - 184 * u);
       // perforation dots down both sides
       ctx.fillStyle = "#04070d";
-      for (let y = 140; y < CANVAS_H - 120; y += 88) {
-        ctx.beginPath(); ctx.arc(60, y, 20, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(CANVAS_W - 60, y, 20, 0, Math.PI * 2); ctx.fill();
+      for (let y = 140 * u; y < size.h - 120 * u; y += 88 * u) {
+        ctx.beginPath(); ctx.arc(60 * u, y, 20 * u, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(size.w - 60 * u, y, 20 * u, 0, Math.PI * 2); ctx.fill();
       }
       // rotated side label
       ctx.save();
-      ctx.translate(150, CANVAS_H / 2);
+      ctx.translate(150 * u, size.h / 2);
       ctx.rotate(-Math.PI / 2);
       ctx.fillStyle = hexA(spec.accent, 0.85);
-      ctx.font = "700 40px 'Courier New', Courier, monospace";
+      ctx.font = `700 ${40 * u}px 'Courier New', Courier, monospace`;
       ctx.textAlign = "center";
       ctx.fillText("\u2022 ADMIT ONE \u2022 GLO STREET PASS \u2022", 0, 0);
       ctx.restore();
       ctx.textAlign = "center";
-      // dashed divider above footer zone
+      // dashed divider, held 60u above the footer bar wherever that lands
       ctx.strokeStyle = hexA("#ffffff", 0.35);
-      ctx.lineWidth = 4;
-      ctx.setLineDash([18, 16]);
-      ctx.beginPath(); ctx.moveTo(140, 1500); ctx.lineTo(CANVAS_W - 140, 1500); ctx.stroke();
+      ctx.lineWidth = 4 * u;
+      ctx.setLineDash([18 * u, 16 * u]);
+      const divY = footerTopOf(size, u) - 60 * u;
+      ctx.beginPath(); ctx.moveTo(insetX(140, size), divY); ctx.lineTo(size.w - insetX(140, size), divY); ctx.stroke();
       ctx.setLineDash([]);
     },
   },
   {
     id: "paper", label: "Paper", hint: "Warm editorial, serif, quiet luxury",
     layout: "center", fontDefault: "editorial", accentDefault: "#F87171", darkText: true, grain: 0.05,
-    paint: (ctx, spec) => {
-      const g = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    paint: (ctx, spec, size, u) => {
+      const g = ctx.createLinearGradient(0, 0, 0, size.h);
       g.addColorStop(0, "#faf7f0");
       g.addColorStop(1, "#efe9dc");
       ctx.fillStyle = g;
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+      ctx.fillRect(0, 0, size.w, size.h);
       // double rules
+      const rx = insetX(120, size);
       ctx.strokeStyle = "#12151c";
-      ctx.lineWidth = 6;
-      ctx.beginPath(); ctx.moveTo(120, 170); ctx.lineTo(CANVAS_W - 120, 170); ctx.stroke();
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(120, 190); ctx.lineTo(CANVAS_W - 120, 190); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(120, CANVAS_H - 190); ctx.lineTo(CANVAS_W - 120, CANVAS_H - 190); ctx.stroke();
-      ctx.lineWidth = 6;
-      ctx.beginPath(); ctx.moveTo(120, CANVAS_H - 170); ctx.lineTo(CANVAS_W - 120, CANVAS_H - 170); ctx.stroke();
+      ctx.lineWidth = 6 * u;
+      ctx.beginPath(); ctx.moveTo(rx, 170 * u); ctx.lineTo(size.w - rx, 170 * u); ctx.stroke();
+      ctx.lineWidth = 2 * u;
+      ctx.beginPath(); ctx.moveTo(rx, 190 * u); ctx.lineTo(size.w - rx, 190 * u); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(rx, size.h - 190 * u); ctx.lineTo(size.w - rx, size.h - 190 * u); ctx.stroke();
+      ctx.lineWidth = 6 * u;
+      ctx.beginPath(); ctx.moveTo(rx, size.h - 170 * u); ctx.lineTo(size.w - rx, size.h - 170 * u); ctx.stroke();
       // wax seal dot
       ctx.fillStyle = spec.accent;
-      ctx.beginPath(); ctx.arc(CANVAS_W / 2, 285, 26, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(size.w / 2, 285 * u, 26 * u, 0, Math.PI * 2); ctx.fill();
     },
   },
   {
     id: "bold", label: "Bold", hint: "Full accent background, giant type",
     layout: "center", fontDefault: "modern", accentDefault: "#A3E635", darkText: true, grain: 0.05,
-    paint: (ctx, spec) => {
+    paint: (ctx, spec, size, u) => {
       ctx.fillStyle = spec.accent;
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+      ctx.fillRect(0, 0, size.w, size.h);
       // halftone dot corner
       ctx.fillStyle = hexA("#0b0e14", 0.35);
       for (let row = 0; row < 9; row++) {
         for (let col = 0; col < 9 - row; col++) {
-          const r = 6 + row * 1.2;
+          const r = (6 + row * 1.2) * u;
           ctx.beginPath();
-          ctx.arc(70 + col * 46, CANVAS_H - 70 - row * 46, r, 0, Math.PI * 2);
+          ctx.arc(70 * u + col * 46 * u, size.h - 70 * u - row * 46 * u, r, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -301,22 +373,22 @@ const TEMPLATES: TemplateDef[] = [
   {
     id: "minimal", label: "Minimal", hint: "Quiet, premium, lots of air",
     layout: "center", fontDefault: "modern", accentDefault: "#22D3EE", darkText: true, grain: 0,
-    paint: (ctx, spec) => {
-      const g = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    paint: (ctx, spec, size, u) => {
+      const g = ctx.createLinearGradient(0, 0, 0, size.h);
       g.addColorStop(0, "#f7f6f2");
       g.addColorStop(1, "#eceae3");
       ctx.fillStyle = g;
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+      ctx.fillRect(0, 0, size.w, size.h);
       ctx.fillStyle = spec.accent;
-      ctx.fillRect(0, CANVAS_H * 0.62, CANVAS_W, 14);
+      ctx.fillRect(0, size.h * 0.62, size.w, 14 * u);
     },
   },
   {
     id: "photo", label: "Photo", hint: "Your photo, cinematic scrim",
     layout: "lower", fontDefault: "modern", accentDefault: "#22D3EE", darkText: false, grain: 0.06,
-    paint: (ctx) => {
+    paint: (ctx, _spec, size) => {
       // photo painted separately (async); fallback:
-      darkGradient(ctx, "#070b14", "#0d1524");
+      darkGradient(ctx, "#070b14", "#0d1524", size);
     },
   },
 ];
@@ -346,8 +418,13 @@ function drawCover(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: numb
   ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
 }
 
-function drawContain(ctx: CanvasRenderingContext2D, img: HTMLImageElement, cx: number, cy: number, maxW: number, maxH: number) {
-  const scale = Math.min(maxW / img.width, maxH / img.height, 1.5);
+/**
+ * maxScale caps how far a small source image may be blown up. It is a scale
+ * factor, not a pixel value, so callers pass 1.5 * u: without that a 120px logo
+ * would still be drawn at 180px on a quarter-size canvas and swamp it.
+ */
+function drawContain(ctx: CanvasRenderingContext2D, img: HTMLImageElement, cx: number, cy: number, maxW: number, maxH: number, maxScale = 1.5) {
+  const scale = Math.min(maxW / img.width, maxH / img.height, maxScale);
   const dw = img.width * scale;
   const dh = img.height * scale;
   ctx.drawImage(img, cx - dw / 2, cy - dh / 2, dw, dh);
@@ -382,8 +459,18 @@ function wrap(ctx: CanvasRenderingContext2D, text: string, maxW: number): string
 
 /* ---------------- main renderer ---------------- */
 
-/** Draw the template onto any 2D context at 1080x1920. Shared by preview and export. */
-export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: TemplateSpec) {
+/**
+ * Draw the template onto any 2D context at any aspect ratio. Shared by preview
+ * and export.
+ *
+ * Every length in here is either a fraction of size.w / size.h or a multiple of
+ * u (see unitOf). Nothing may be a bare pixel number: the layout was tuned at
+ * 1080x1920 and a bare number would silently mean "1080-short-edge pixels" on a
+ * canvas that is not that size.
+ */
+export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: TemplateSpec, size: CanvasSize = RATIOS["9:16"]) {
+  const u = unitOf(size);
+  const mx = insetX(90, size);
   const tpl = templateOf(spec);
   const font = fontOf(spec);
   const headlineRaw = spec.headline.trim() || "Your headline";
@@ -396,20 +483,20 @@ export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: Template
   const hasFooter = Boolean(cta || qrUrl);
   const onPhoto = tpl.id === "photo";
 
-  ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+  ctx.clearRect(0, 0, size.w, size.h);
 
   // ---- Background
   const bgImg = onPhoto && spec.bgImage ? await loadImage(spec.bgImage) : null;
   if (onPhoto && bgImg) {
-    drawCover(ctx, bgImg, 0, 0, CANVAS_W, CANVAS_H);
-    const scrim = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    drawCover(ctx, bgImg, 0, 0, size.w, size.h);
+    const scrim = ctx.createLinearGradient(0, 0, 0, size.h);
     scrim.addColorStop(0, "rgba(4,7,13,0.35)");
     scrim.addColorStop(0.45, "rgba(4,7,13,0.15)");
     scrim.addColorStop(1, "rgba(4,7,13,0.88)");
     ctx.fillStyle = scrim;
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    ctx.fillRect(0, 0, size.w, size.h);
   } else {
-    tpl.paint(ctx, spec);
+    tpl.paint(ctx, spec, size, u);
   }
 
   // ---- Foreground colors
@@ -417,7 +504,7 @@ export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: Template
   const fg = darkText ? "#12151c" : "#ffffff";
   const sub = darkText ? "#4b5563" : "rgba(255,255,255,0.85)";
   const leftAlign = tpl.layout === "left";
-  const anchorX = leftAlign ? 90 : CANVAS_W / 2;
+  const anchorX = leftAlign ? mx : size.w / 2;
   ctx.textAlign = leftAlign ? "left" : "center";
 
   // ---- Logo (top center / top left)
@@ -426,8 +513,8 @@ export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: Template
     if (logo) {
       ctx.save();
       ctx.shadowColor = "rgba(0,0,0,0.45)";
-      ctx.shadowBlur = darkText ? 0 : 24;
-      drawContain(ctx, logo, leftAlign ? 90 + 160 : CANVAS_W / 2, 250, 380, 200);
+      ctx.shadowBlur = darkText ? 0 : 24 * u;
+      drawContain(ctx, logo, leftAlign ? mx + 160 * u : size.w / 2, 250 * u, 380 * u, 200 * u, 1.5 * u);
       ctx.restore();
     }
   }
@@ -439,41 +526,44 @@ export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: Template
   if (tpl.layout === "left") centerFrac = 0.44;
 
   // ---- Headline (auto-fit, wraps)
+  // hSize, not "size": the canvas dimensions own that name now.
   ctx.fillStyle = fg;
-  let size = tpl.id === "bold" || tpl.id === "poster" ? 150 : 128;
-  const maxTextW = leftAlign ? CANVAS_W - 180 : CANVAS_W - 200;
-  ctx.font = `800 ${size}px ${font.stack}`;
+  let hSize = (tpl.id === "bold" || tpl.id === "poster" ? 150 : 128) * u;
+  // Both former literals (180, 200) were twice the side inset, give or take the
+  // extra 10 of air the centred layouts carried, so derive them from mx.
+  const maxTextW = leftAlign ? size.w - mx * 2 : size.w - (mx * 2 + 20 * u);
+  ctx.font = `800 ${hSize}px ${font.stack}`;
   let lines = wrap(ctx, headline, maxTextW);
-  while (lines.length > 4 && size > 72) {
-    size -= 12;
-    ctx.font = `800 ${size}px ${font.stack}`;
+  while (lines.length > 4 && hSize > 72 * u) {
+    hSize -= 12 * u;
+    ctx.font = `800 ${hSize}px ${font.stack}`;
     lines = wrap(ctx, headline, maxTextW);
   }
-  const lineH = size * 1.08;
+  const lineH = hSize * 1.08;
   const blockH = lines.length * lineH;
-  let y = CANVAS_H * centerFrac - blockH / 2 + lineH * 0.8;
+  let y = size.h * centerFrac - blockH / 2 + lineH * 0.8;
 
   // ---- Kicker above the headline
   if (kicker) {
     ctx.save();
     ctx.fillStyle = darkText ? tpl.accentDefault && spec.accent ? spec.accent : "#12151c" : hexA("#ffffff", 0.9);
     if (!darkText) ctx.fillStyle = spec.accent;
-    ctx.font = `700 40px ${font.stack}`;
+    ctx.font = `700 ${40 * u}px ${font.stack}`;
     const tracked = kicker.split("").join("\u200a\u200a");
-    ctx.fillText(tracked, anchorX, y - lineH * 0.9 - 26);
+    ctx.fillText(tracked, anchorX, y - lineH * 0.9 - 26 * u);
     ctx.restore();
   }
 
   ctx.save();
   if (tpl.id === "glow" || tpl.id === "midnight" || tpl.id === "mesh") {
     ctx.shadowColor = hexA(spec.accent, 0.85);
-    ctx.shadowBlur = 40;
+    ctx.shadowBlur = 40 * u;
   } else if (onPhoto && bgImg) {
     ctx.shadowColor = "rgba(0,0,0,0.65)";
-    ctx.shadowBlur = 28;
+    ctx.shadowBlur = 28 * u;
   }
   ctx.fillStyle = fg;
-  ctx.font = `800 ${size}px ${font.stack}`;
+  ctx.font = `800 ${hSize}px ${font.stack}`;
   lines.forEach((ln) => {
     ctx.fillText(ln, anchorX, y);
     y += lineH;
@@ -483,23 +573,25 @@ export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: Template
   // ---- Subline
   if (subline) {
     ctx.fillStyle = sub;
-    ctx.font = `500 52px ${font.stack}`;
+    ctx.font = `500 ${52 * u}px ${font.stack}`;
     ctx.save();
-    if (onPhoto && bgImg) { ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 18; }
-    const subLines = wrap(ctx, subline, maxTextW - 40);
-    let sy = y + 30;
+    if (onPhoto && bgImg) { ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 18 * u; }
+    const subLines = wrap(ctx, subline, maxTextW - 40 * u);
+    let sy = y + 30 * u;
     subLines.slice(0, 3).forEach((ln) => {
       ctx.fillText(ln, anchorX, sy);
-      sy += 66;
+      sy += 66 * u;
     });
     ctx.restore();
   }
 
   // ---- Offer starburst (top-right)
   if (offer) {
-    const cx = 860;
-    const cy = spec.logoImage ? 590 : 480;
-    const R = 168;
+    // Mirrored off the right edge (1080 - 860 = 220) so the badge keeps hugging
+    // the top-right corner instead of drifting inward on a wide canvas.
+    const cx = size.w - 220 * u;
+    const cy = (spec.logoImage ? 590 : 480) * u;
+    const R = 168 * u;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(-0.21);
@@ -517,7 +609,7 @@ export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: Template
     const burstFg = tpl.id === "bold" ? spec.accent : "#0b0e14";
     ctx.fillStyle = burstBg;
     ctx.shadowColor = "rgba(0,0,0,0.4)";
-    ctx.shadowBlur = 22;
+    ctx.shadowBlur = 22 * u;
     ctx.fill();
     ctx.shadowBlur = 0;
     ctx.fillStyle = burstFg;
@@ -530,14 +622,14 @@ export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: Template
       l1 = words.slice(0, mid).join(" ");
       l2 = words.slice(mid).join(" ");
     }
-    let bs = 64;
+    let bs = 64 * u;
     ctx.font = `800 ${bs}px ${font.stack}`;
-    while ((ctx.measureText(l1).width > R * 1.5 || ctx.measureText(l2).width > R * 1.5) && bs > 30) {
-      bs -= 4;
+    while ((ctx.measureText(l1).width > R * 1.5 || ctx.measureText(l2).width > R * 1.5) && bs > 30 * u) {
+      bs -= 4 * u;
       ctx.font = `800 ${bs}px ${font.stack}`;
     }
     if (l2) {
-      ctx.fillText(l1, 0, -8);
+      ctx.fillText(l1, 0, -8 * u);
       ctx.fillText(l2, 0, bs * 1.02);
     } else {
       ctx.fillText(l1, 0, bs * 0.35);
@@ -547,29 +639,32 @@ export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: Template
   }
 
   // ---- Footer bar: CTA + QR
-  const footerTop = 1560;
-  const footerH = 210;
+  const footerTop = footerTopOf(size, u);
+  const footerH = FOOTER_H_BASE * u;
+  const fx = insetX(70, size);
   if (hasFooter) {
     const footBg = tpl.id === "bold" ? "#0b0e14" : spec.accent;
     const footFg = tpl.id === "bold" ? "#ffffff" : "#0b0e14";
     ctx.fillStyle = footBg;
-    ctx.fillRect(0, footerTop, CANVAS_W, footerH);
+    ctx.fillRect(0, footerTop, size.w, footerH);
 
     let qrCard = 0;
     if (qrUrl) {
-      qrCard = 170;
+      qrCard = 170 * u;
       try {
         const qrData = await QRCode.toDataURL(qrUrl, {
-          width: 320, margin: 1, errorCorrectionLevel: "M",
+          // Source raster, so it tracks the drawn card size and stays crisp
+          // without generating a 320px bitmap for a thumbnail.
+          width: Math.max(64, Math.round(320 * u)), margin: 1, errorCorrectionLevel: "M",
           color: { dark: "#0b0e14", light: "#ffffff" },
         });
         const qrImg = await loadImage(qrData);
         if (qrImg) {
-          const pad = 12;
-          const cardX = CANVAS_W - 70 - qrCard;
+          const pad = 12 * u;
+          const cardX = size.w - fx - qrCard;
           const cardY = footerTop + (footerH - qrCard) / 2;
           ctx.fillStyle = "#ffffff";
-          roundRect(ctx, cardX - pad, cardY - pad, qrCard + pad * 2, qrCard + pad * 2, 16);
+          roundRect(ctx, cardX - pad, cardY - pad, qrCard + pad * 2, qrCard + pad * 2, 16 * u);
           ctx.fill();
           ctx.drawImage(qrImg, cardX, cardY, qrCard, qrCard);
         }
@@ -578,15 +673,15 @@ export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: Template
       }
     }
 
-    const textMaxW = CANVAS_W - 140 - (qrCard ? qrCard + 90 : 0);
+    const textMaxW = size.w - fx * 2 - (qrCard ? qrCard + 90 * u : 0);
     const ctaText = cta || "Scan for the offer";
     ctx.fillStyle = footFg;
     ctx.textAlign = "left";
-    let cs = 56;
+    let cs = 56 * u;
     ctx.font = `800 ${cs}px ${font.stack}`;
     let ctaLines = wrap(ctx, font.upper ? ctaText.toUpperCase() : ctaText, textMaxW);
-    while (ctaLines.length > 2 && cs > 34) {
-      cs -= 4;
+    while (ctaLines.length > 2 && cs > 34 * u) {
+      cs -= 4 * u;
       ctx.font = `800 ${cs}px ${font.stack}`;
       ctaLines = wrap(ctx, font.upper ? ctaText.toUpperCase() : ctaText, textMaxW);
     }
@@ -594,31 +689,44 @@ export async function drawTemplate(ctx: CanvasRenderingContext2D, spec: Template
     const ctaBlockH = ctaLines.length * cs * 1.15;
     let cy2 = footerTop + footerH / 2 - ctaBlockH / 2 + cs * 0.85;
     ctaLines.forEach((ln) => {
-      ctx.fillText(ln, 70, cy2);
+      ctx.fillText(ln, fx, cy2);
       cy2 += cs * 1.15;
     });
   }
 
   // ---- Film grain
-  grainOverlay(ctx, tpl.grain);
+  grainOverlay(ctx, tpl.grain, size, u);
 
   // ---- Glo watermark
   ctx.fillStyle = darkText ? "#9ca3af" : "rgba(255,255,255,0.55)";
-  ctx.font = `600 34px system-ui, -apple-system, 'Segoe UI', sans-serif`;
+  ctx.font = `600 ${34 * u}px system-ui, -apple-system, 'Segoe UI', sans-serif`;
   ctx.textAlign = "center";
-  ctx.fillText("glo \u00b7 we-are-glo.com", CANVAS_W / 2, CANVAS_H - 60);
+  ctx.fillText("glo \u00b7 we-are-glo.com", size.w / 2, size.h - 60 * u);
 }
 
-export async function renderTemplatePng(spec: TemplateSpec): Promise<Blob> {
+export async function renderTemplatePng(spec: TemplateSpec, size: CanvasSize = RATIOS["9:16"]): Promise<Blob> {
   const canvas = document.createElement("canvas");
-  canvas.width = CANVAS_W;
-  canvas.height = CANVAS_H;
+  canvas.width = size.w;
+  canvas.height = size.h;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas unavailable");
-  await drawTemplate(ctx, spec);
+  await drawTemplate(ctx, spec, size);
   return await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("PNG export failed"))), "image/png")
   );
+}
+
+/**
+ * Render one spec into every shipped ratio. Sequential on purpose: each pass
+ * allocates a full-size canvas and awaits image decodes, so running four at
+ * once just multiplies peak memory on a phone.
+ */
+export async function renderAllRatios(spec: TemplateSpec): Promise<Record<RatioId, Blob>> {
+  const out = {} as Record<RatioId, Blob>;
+  for (const id of RATIO_IDS) {
+    out[id] = await renderTemplatePng(spec, RATIOS[id]);
+  }
+  return out;
 }
 
 function readAsDataURL(file: File): Promise<string> {
@@ -632,17 +740,20 @@ function readAsDataURL(file: File): Promise<string> {
 
 /* ---------------- gallery thumbnails ---------------- */
 
-function TemplateThumb({ tpl, active, accent, onClick }: {
-  tpl: TemplateDef; active: boolean; accent: string; onClick: () => void;
+function TemplateThumb({ tpl, active, accent, ratio, onClick }: {
+  tpl: TemplateDef; active: boolean; accent: string; ratio: RatioId; onClick: () => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
-    canvas.width = CANVAS_W / 4;
-    canvas.height = CANVAS_H / 4;
+    const size = RATIOS[ratio];
+    canvas.width = size.w / 4;
+    canvas.height = size.h / 4;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    // Draw at full size through a 0.25 transform rather than passing a quarter
+    // size, so the thumbnail is a faithful shrink of the real rendition.
     ctx.scale(0.25, 0.25);
     const sample: TemplateSpec = {
       preset: tpl.id,
@@ -651,8 +762,8 @@ function TemplateThumb({ tpl, active, accent, onClick }: {
       accent: active ? accent : tpl.accentDefault,
       font: tpl.fontDefault,
     };
-    drawTemplate(ctx, sample);
-  }, [tpl, active, accent]);
+    drawTemplate(ctx, sample, size);
+  }, [tpl, active, accent, ratio]);
   return (
     <button
       type="button"
@@ -662,7 +773,7 @@ function TemplateThumb({ tpl, active, accent, onClick }: {
         active ? "border-cy-400/70 shadow-glow-cy scale-[1.02]" : "border-line-800 hover:border-line-600"
       }`}
     >
-      <canvas ref={ref} className="w-full h-auto block" style={{ aspectRatio: "9/16" }} />
+      <canvas ref={ref} className="w-full h-auto block" style={{ aspectRatio: `${RATIOS[ratio].w}/${RATIOS[ratio].h}` }} />
       <div className={`px-1.5 py-1 text-[10px] font-medium truncate ${active ? "text-cy-300 bg-cy-400/10" : "text-ink-300 bg-bg-950/60"}`}>
         {tpl.label}
       </div>
@@ -682,22 +793,28 @@ export function TemplateBuilder({
   const previewRef = useRef<HTMLCanvasElement>(null);
   const [ready, setReady] = useState(false);
   const [imgErr, setImgErr] = useState<string | null>(null);
+  // Preview-only. The export path still ships 9:16 until multi-rendition
+  // upload lands, so this never touches the spec.
+  const [ratio, setRatio] = useState<RatioId>("9:16");
   const seq = useRef(0);
   const font = fontOf(spec);
   const tpl = templateOf(spec);
+  const previewSize = RATIOS[ratio];
 
   useEffect(() => {
     const canvas = previewRef.current;
     if (!canvas) return;
-    canvas.width = CANVAS_W;
-    canvas.height = CANVAS_H;
+    const size = RATIOS[ratio];
+    canvas.width = size.w;
+    canvas.height = size.h;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const mySeq = ++seq.current;
-    drawTemplate(ctx, spec).then(() => {
+    setReady(false);
+    drawTemplate(ctx, spec, size).then(() => {
       if (mySeq === seq.current) setReady(true);
     });
-  }, [spec]);
+  }, [spec, ratio]);
 
   async function onImage(file: File | undefined, key: "bgImage" | "logoImage") {
     if (!file) return;
@@ -722,7 +839,7 @@ export function TemplateBuilder({
           <label className="block text-xs uppercase tracking-wider text-ink-400 mb-2">Template</label>
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
             {TEMPLATES.map((t) => (
-              <TemplateThumb key={t.id} tpl={t} active={spec.preset === t.id} accent={spec.accent} onClick={() => pickTemplate(t)} />
+              <TemplateThumb key={t.id} tpl={t} active={spec.preset === t.id} accent={spec.accent} ratio={ratio} onClick={() => pickTemplate(t)} />
             ))}
           </div>
         </div>
@@ -850,17 +967,33 @@ export function TemplateBuilder({
         {imgErr && <p className="text-sm text-red-400">{imgErr}</p>}
         <p className="text-[11px] text-ink-500">
           Exports a 1080{"\u00d7"}1920 portrait image. Glo auto-fits it to each screen at delivery.
+          The shape buttons above the preview only change what you see here.
         </p>
       </div>
 
       <div className="order-first md:order-none">
         <div className="text-xs uppercase tracking-wider text-ink-400 mb-1.5">Live preview</div>
+        <div className="flex flex-wrap gap-1.5 mb-2" role="group" aria-label="Preview shape">
+          {RATIO_IDS.map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => setRatio(r)}
+              aria-pressed={ratio === r}
+              className={`px-2 py-1 rounded-md text-[11px] font-medium border transition-colors ${
+                ratio === r ? "bg-cy-400/15 text-cy-300 border-cy-400/40" : "border-line-800 text-ink-400 hover:text-ink-50 hover:border-line-700"
+              }`}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
         <div className="rounded-lg border border-line-800 bg-bg-900 p-3 flex justify-center md:sticky md:top-4">
           <canvas
             ref={previewRef}
             className="w-full max-w-[170px] sm:max-w-[240px] h-auto rounded-md"
-            style={{ aspectRatio: "9/16" }}
-            aria-label="Template preview"
+            style={{ aspectRatio: `${previewSize.w}/${previewSize.h}` }}
+            aria-label={`Template preview at ${ratio}`}
           />
         </div>
         {!ready && <p className="text-[11px] text-ink-500 mt-2">Rendering{"\u2026"}</p>}
