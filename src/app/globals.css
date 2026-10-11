@@ -46,6 +46,23 @@
   a, button, [role="button"], input, select, textarea, label { touch-action: manipulation; }
   html { -webkit-tap-highlight-color: transparent; }
 
+  /* IDA-27: text came back oversized on mobile after advancing past the map.
+     Two separate iOS behaviours, both of which need opting out of explicitly.
+
+     1. Text auto-inflation. Mobile Safari and Chrome resize text inside blocks
+        they judge too narrow or too wide for the viewport, independently of
+        the CSS size. Step 2 is the first narrow (max-w-md) column in the flow,
+        which is exactly the shape that triggers it. 100% keeps our sizes. */
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+  /*  2. Focus zoom. iOS zooms the viewport when a form control under 16px is
+        focused, and does NOT zoom back out on blur, so every later screen
+        stays magnified. Step 2 holds the first date inputs in the flow, and
+        a native date control does not inherit our type reliably. 16px is the
+        documented threshold, so pin the floor rather than trusting
+        inheritance; larger utility classes still win. */
+  input, select, textarea { font-size: max(16px, 1em); }
+
   /* Type: tracking is size-specific. Large text tightens, small caps-labels open up. */
   h1 { letter-spacing: -0.024em; line-height: 1.1; font-optical-sizing: auto; }
   h2 { letter-spacing: -0.018em; line-height: 1.2; }
