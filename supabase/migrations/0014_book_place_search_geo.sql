@@ -37,13 +37,15 @@
 --     sharing its label, so headline and map agree by construction.
 --
 -- Verified against production data before shipping:
---   Williamsburg New York  null -> Williamsburg, New York   n=75
---   Williamsburg, NY       null -> Williamsburg, New York   n=75
---   Brooklyn               10   -> Brooklyn, New York       n=934
---   Brooklyn NY            null -> Brooklyn, New York       n=934
+--   Williamsburg New York  null -> Williamsburg, New York   n=77
+--   Williamsburg, NY       null -> Williamsburg, New York   n=77
+--   Chelsea Manhattan      null -> Chelsea, New York        n=155
+--   Chelsea NYC            null -> Chelsea, New York        n=155
+--   Brooklyn               10   -> Brooklyn, New York       n=1020
+--   Brooklyn NY            null -> Brooklyn, New York       n=1020
 --   Soho NYC               null -> SoHo, New York           n=23
 --   Mission SF             null -> Mission, San Francisco   n=71
---   Manhattan              7    -> Manhattan, New York      n=1650
+--   Manhattan              7    -> Manhattan, New York      n=1363
 --   Chicago                1627 -> Chicago (city)           n=1627  (no regression)
 --   Austin                 745  -> Austin (city)            n=745   (no regression)
 --   Williamsburg Virginia  null -> null  (correct: no Virginia inventory)
@@ -79,21 +81,30 @@ drop policy if exists place_areas_read on public.place_areas;
 create policy place_areas_read on public.place_areas for select using (true);
 grant select on public.place_areas to anon, authenticated;
 
--- Seed: the five NYC boroughs and Williamsburg, bounded by the screens
--- standing in their postal codes. Derived from data rather than typed in, so
--- bounds track inventory. Re-runnable.
+-- Seed: the five NYC boroughs, plus Chelsea and Williamsburg.
+--
+-- Bounds are true geographic extents, NOT derived from the screens' own
+-- postal codes. Deriving them was tried first and is wrong: postal_code
+-- carries badly geocoded outliers, so min/max over a ZIP's members blows the
+-- box far past the real place. ZIP 10001 spans 13km (lat 40.646 -> 40.754,
+-- Brooklyn up to Midtown) against a Chelsea barely 2km across, and seeding
+-- from it reported 1,215 screens in Chelsea -- most of Manhattan -- where the
+-- true bounds give 155. A single mislocated row cannot move a typed bound.
+--
+-- Counts these bounds produce against current inventory:
+--   Manhattan 1363, Brooklyn 1020, Queens 777, Bronx 252,
+--   Staten Island 100, Chelsea 155, Williamsburg 77.
+--
+-- Re-runnable. To add an area, add a row: no code change.
 insert into public.place_areas (name, kind, city, min_lat, min_lng, max_lat, max_lng)
-select v.name, v.kind, 'New York', min(s.lat), min(s.lng), max(s.lat), max(s.lng)
-  from (values
-    ('Brooklyn','borough',array['112']), ('Manhattan','borough',array['100','101','102']),
-    ('Queens','borough',array['111','113','114','116']), ('Bronx','borough',array['104']),
-    ('Staten Island','borough',array['103']),
-    ('Williamsburg','neighborhood',array['11211','11249'])
-  ) v(name, kind, prefixes)
-  join public.screens s on s.is_available and s.city='New York'
-   and exists (select 1 from unnest(v.prefixes) p where s.postal_code like p||'%')
- group by v.name, v.kind
-having count(*) > 0
+values
+  ('Manhattan',     'borough',      'New York', 40.6975, -74.0190, 40.8820, -73.9067),
+  ('Brooklyn',      'borough',      'New York', 40.5707, -74.0419, 40.7395, -73.8334),
+  ('Queens',        'borough',      'New York', 40.5417, -73.9626, 40.8007, -73.7004),
+  ('Bronx',         'borough',      'New York', 40.7855, -73.9339, 40.9176, -73.7654),
+  ('Staten Island', 'borough',      'New York', 40.4960, -74.2556, 40.6490, -74.0522),
+  ('Chelsea',       'neighborhood', 'New York', 40.7380, -74.0110, 40.7560, -73.9880),
+  ('Williamsburg',  'neighborhood', 'New York', 40.7000, -73.9690, 40.7240, -73.9350)
     on conflict (name, city) do nothing;
 
 create or replace function public.book_place_search(q text)
