@@ -107,8 +107,14 @@ values
   ('Williamsburg',  'neighborhood', 'New York', 40.7000, -73.9690, 40.7240, -73.9350)
     on conflict (name, city) do nothing;
 
+-- search_path must include `extensions`: PostGIS is installed there on
+-- Supabase, and this function resolves `geometry` and st_makeenvelope for its
+-- area counts. Pinning `public` alone fails at CREATE time with
+-- 'type "geometry" does not exist'. public stays first so unqualified table
+-- names still resolve to it under security definer.
 create or replace function public.book_place_search(q text)
-returns jsonb language sql stable security definer set search_path = public as $$
+returns jsonb language sql stable security definer
+set search_path = public, extensions as $$
   with
   raw as (
     select nullif(regexp_replace(regexp_replace(trim(q),'\s*,\s*',' ','g'),'\s+',' ','g'),'') as t
