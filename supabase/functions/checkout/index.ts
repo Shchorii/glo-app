@@ -50,6 +50,14 @@ function daysBetween(start: string, end: string): number {
   return Math.round((e - s) / 86400000) + 1;
 }
 
+// UTC today minus one day. A same-day booking in a timezone behind UTC is
+// already "tomorrow" in UTC by evening; rejecting that would block a flight
+// the advertiser correctly started today. The /book UI is stricter (local today).
+function earliestBookableStart(now = new Date()): string {
+  const utcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return new Date(utcMidnight - 86_400_000).toISOString().slice(0, 10);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   const json = (body: unknown, status = 200) =>
@@ -82,6 +90,11 @@ Deno.serve(async (req) => {
     if (!c || c.user_id !== user.id) return json({ error: "Campaign not found." }, 404);
     if (c.status !== "pending_payment" && c.status !== "draft") {
       return json({ error: `Campaign is ${c.status}; nothing to pay.` }, 409);
+    }
+
+    const startDay = String(c.start_date).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(startDay) && startDay < earliestBookableStart()) {
+      return json({ error: "This campaign's start date is in the past. Pick new dates." }, 409);
     }
 
     const attached = c.creatives as { review_status?: string; rejection_reason?: string | null } | { review_status?: string; rejection_reason?: string | null }[] | null;
