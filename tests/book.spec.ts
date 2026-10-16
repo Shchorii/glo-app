@@ -272,6 +272,56 @@ test("step bar fits at 400px without horizontal scroll", async ({ page }) => {
   expect(review!.x + review!.width).toBeLessThanOrEqual(400);
 });
 
+/** Clock must already be installed; geolocation's fallback timer does not run until it advances. */
+async function openDates(page: Page) {
+  await page.goto(`${BASE}/book?city=Chicago&view=list`);
+  await page.clock.runFor(8_000);
+  const card = page.locator("button.card-tight").first();
+  await expect(card).toBeVisible({ timeout: 20000 });
+  await card.click();
+  await page.getByRole("button", { name: /^Next/ }).click();
+  await expect(page.locator("#flight-start")).toBeVisible();
+}
+
+test("a flight left open past its start shifts forward and a past date cannot continue", async ({ page }) => {
+  // IDA-26: mount day sticks while min moves. Shift the whole flight, then block a typed past start.
+  await page.clock.install({ time: new Date("2026-10-12T12:00:00Z") });
+  await openDates(page);
+
+  const start = page.locator("#flight-start");
+  const end = page.locator("#flight-end");
+  await expect(start).toHaveValue("2026-10-12");
+  await end.fill("2026-10-14");
+  await expect(end).toHaveValue("2026-10-14");
+
+  await page.clock.setFixedTime(new Date("2026-10-16T12:00:00Z"));
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await expect(start).toHaveValue("2026-10-16");
+  await expect(end).toHaveValue("2026-10-18");
+  await expect(start).toHaveAttribute("min", "2026-10-16");
+  expect(await start.inputValue() >= ((await start.getAttribute("min")) ?? "")).toBe(true);
+  await expect(page.getByText("Dates moved to today, past days can't be booked.")).toBeVisible();
+
+  await start.fill("2026-10-15");
+  await expect(page.getByText("Start date can't be in the past.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Next/ })).toBeDisabled();
+});
+
+test.describe("local calendar date", () => {
+  test.use({ timezoneId: "Asia/Jerusalem" });
+
+  test("before dawn the start date is the local day, not yesterday UTC", async ({ page }) => {
+    // 01:30 IDT on 2026-10-16 is still 2026-10-15 in UTC.
+    await page.clock.install({ time: new Date("2026-10-16T01:30:00+03:00") });
+    await openDates(page);
+
+    await expect(page.locator("#flight-start")).toHaveValue("2026-10-16");
+    const utcDay = await page.evaluate(() => new Date().toISOString().slice(0, 10));
+    expect(utcDay).toBe("2026-10-15");
+  });
+});
+
 test("list view agrees with the map filters, paginates, and the URL restores it", async ({ page }) => {
   await page.goto(`${BASE}/book?city=Chicago&venue=bar&view=list`);
   const caption = page.getByTestId("list-caption");

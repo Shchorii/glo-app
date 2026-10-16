@@ -18,6 +18,7 @@ import {
   MapPin, List, Map as MapIcon, Monitor, Calendar, ImagePlus, Wand2, FolderOpen,
   ChevronLeft, ChevronRight, Loader2, CheckCircle2, Upload, Search, X,
 } from "lucide-react";
+import { clampFlight, localTodayISO } from "@/lib/dates";
 import { ZIP_CENTROIDS } from "@/lib/zip-centroids";
 import {
   bboxAround, fetchFilters, fetchList, screensByIds, searchPlace,
@@ -92,10 +93,30 @@ export default function BookPage() {
   const [chips, setChips] = useState<Screen[]>([]);
   const urlReady = useRef(false);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState(today);
+  const [today, setToday] = useState(() => localTodayISO());
+  const [startDate, setStartDate] = useState(() => localTodayISO());
+  const [endDate, setEndDate] = useState(() => localTodayISO());
+  const [datesShifted, setDatesShifted] = useState(false);
   const [dayparts, setDayparts] = useState<string[]>([]); // empty = all day
+  const startRef = useRef(startDate);
+  const endRef = useRef(endDate);
+  startRef.current = startDate;
+  endRef.current = endDate;
+  const refreshFlightRef = useRef<() => void>(() => {});
+  refreshFlightRef.current = () => {
+    const t = localTodayISO();
+    setToday(t);
+    const next = clampFlight(startRef.current, endRef.current, t);
+    if (next.start !== startRef.current) {
+      startRef.current = next.start;
+      setStartDate(next.start);
+    }
+    if (next.end !== endRef.current) {
+      endRef.current = next.end;
+      setEndDate(next.end);
+    }
+    if (next.shifted) setDatesShifted(true);
+  };
 
   const [name, setName] = useState("");
   const [creative, setCreative] = useState<CreativeChoice>({ kind: "none" });
@@ -118,6 +139,43 @@ export default function BookPage() {
       router.replace(`/sign-in?next=${encodeURIComponent("/book" + search)}`);
     }
   }, [loading, user, router]);
+
+  // A tab left open or restored from bfcache keeps the dates from when the
+  // page mounted. Shift that flight onto today. Midnight while the user is
+  // already on a step only moves "today", so Review can block a stale flight
+  // until they re-enter Dates.
+  useEffect(() => {
+    const refresh = () => refreshFlightRef.current();
+    refresh();
+
+    let midnightTimer = 0;
+    const armMidnight = () => {
+      window.clearTimeout(midnightTimer);
+      const now = new Date();
+      const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      midnightTimer = window.setTimeout(() => {
+        setToday(localTodayISO());
+        armMidnight();
+      }, Math.max(0, nextMidnight.getTime() - now.getTime()));
+    };
+    armMidnight();
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const onPageShow = () => refresh();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      window.clearTimeout(midnightTimer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onPageShow);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (step === 1 || step === 3) refreshFlightRef.current();
+  }, [step]);
 
   // Filters, search and view come from the URL so a filtered view is shareable.
   useEffect(() => {
@@ -467,9 +525,10 @@ export default function BookPage() {
     });
   }
 
+  const startInPast = startDate < today;
   const canNext =
     step === 0 ? selected.size > 0 :
-    step === 1 ? days > 0 :
+    step === 1 ? days > 0 && !startInPast :
     step === 2 ? (creative.kind !== "template" || tplSpec.headline.trim().length > 0) :
     false;
 
@@ -500,6 +559,12 @@ export default function BookPage() {
   }
 
   async function save(status: "draft" | "pending_payment") {
+    const liveToday = localTodayISO();
+    if (startDate < liveToday) {
+      setToday(liveToday);
+      setSaveErr("Start date can't be in the past.");
+      return;
+    }
     setSaving(status === "draft" ? "draft" : "book");
     setSaveErr(null);
     try {
@@ -865,18 +930,28 @@ export default function BookPage() {
         <div className="max-w-md">
           <div className="grid grid-cols-2 gap-4 mb-5">
             <div>
-              <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Start</label>
-              <input type="date" min={today} value={startDate}
-                onChange={(e) => { setStartDate(e.target.value); if (e.target.value > endDate) setEndDate(e.target.value); }}
+              <label htmlFor="flight-start" className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Start</label>
+              <input id="flight-start" type="date" min={today} value={startDate}
+                onChange={(e) => {
+                  setDatesShifted(false);
+                  setStartDate(e.target.value);
+                  if (e.target.value > endDate) setEndDate(e.target.value);
+                }}
                 className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none" />
+              {startInPast && (
+                <p className="text-[12px] text-red-400 mt-1.5">Start date can't be in the past.</p>
+              )}
             </div>
             <div>
-              <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">End</label>
-              <input type="date" min={startDate} value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+              <label htmlFor="flight-end" className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">End</label>
+              <input id="flight-end" type="date" min={startDate} value={endDate}
+                onChange={(e) => { setDatesShifted(false); setEndDate(e.target.value); }}
                 className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none" />
             </div>
           </div>
+          {datesShifted && (
+            <p className="text-[12px] text-ink-400 -mt-3 mb-5">Dates moved to today, past days can't be booked.</p>
+          )}
           <div className="mb-5">
             <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Timing</label>
             <div className="flex flex-wrap gap-2">
@@ -1054,6 +1129,14 @@ export default function BookPage() {
           <p className="text-[12px] text-ink-500">
             Booking reserves your screens and dates. You complete payment from the campaign page; nothing is charged until checkout.
           </p>
+          {startInPast && (
+            <p className="rounded-lg border border-amber-400/30 bg-amber-400/5 px-4 py-3 text-[13px] text-amber-200">
+              {"Start date can't be in the past. "}
+              <button type="button" onClick={() => setStep(1)} className="underline underline-offset-2 font-medium">
+                Back to dates
+              </button>
+            </p>
+          )}
           {demoCount > 0 && (
             <p className="text-[12px] text-amber-200">{"Demo screens can't be booked yet. Remove them or save as draft."}</p>
           )}
@@ -1076,7 +1159,7 @@ export default function BookPage() {
             </span>
           )}
           {step >= 1 && (step < 3 || demoCount > 0) && (
-            <button type="button" disabled={saving !== "idle"} onClick={() => save("draft")} className="btn btn-ghost disabled:opacity-40">
+            <button type="button" disabled={saving !== "idle" || startInPast} onClick={() => save("draft")} className="btn btn-ghost disabled:opacity-40">
               {saving === "draft" ? <Loader2 size={15} className="animate-spin" /> : "Save draft"}
             </button>
           )}
@@ -1085,7 +1168,7 @@ export default function BookPage() {
               Next <ChevronRight size={15} />
             </button>
           ) : (
-            <button type="button" disabled={saving !== "idle" || demoCount > 0} onClick={() => save("pending_payment")} className="btn btn-lime disabled:opacity-40">
+            <button type="button" disabled={saving !== "idle" || demoCount > 0 || startInPast} onClick={() => save("pending_payment")} className="btn btn-lime disabled:opacity-40">
               {saving === "book" ? <Loader2 size={15} className="animate-spin" /> : `Book · ${fmtUsd(total)}`}
             </button>
           )}
