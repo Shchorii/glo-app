@@ -333,3 +333,103 @@ test("list view agrees with the map filters, paginates, and the URL restores it"
     expect(t).toMatch(/bar/i);
   }
 });
+
+const LIST_URL = `${BASE}/book/?city=Chicago&venue=bar&view=list`;
+const MAP_URL = `${BASE}/book/?city=Chicago&venue=bar`;
+
+async function expectChicagoBarList(page: Page) {
+  await expect(page.getByRole("button", { name: "List", exact: true })).toHaveAttribute("aria-pressed", "true", { timeout: 20000 });
+  const caption = page.getByTestId("list-caption");
+  await expect(caption).toHaveText(/of 359 screens/, { timeout: 20000 });
+  await expect(page).toHaveURL(/city=Chicago/);
+  await expect(page).toHaveURL(/venue=bar/);
+  await expect(page).toHaveURL(/view=list/);
+  const cards = page.locator("button.card-tight");
+  expect(await cards.count()).toBeGreaterThan(0);
+  expect(await cards.count()).toBeLessThanOrEqual(60);
+  for (const t of await cards.allInnerTexts()) {
+    expect(t).toMatch(/Chicago/);
+    expect(t).toMatch(/bar/i);
+  }
+}
+
+test("shared list URL restores List view when geolocation is New York", async ({ page, context }) => {
+  await context.setGeolocation({ latitude: 40.7128, longitude: -74.006 });
+  await context.grantPermissions(["geolocation"]);
+  await page.goto(LIST_URL);
+  await expectChicagoBarList(page);
+});
+
+test("shared list URL restores List view when geolocation never answers", async ({ page }) => {
+  // The 6.5s New York fallback must not run ahead of the clock, and must not
+  // replace the Chicago list once it does.
+  await page.clock.install();
+  await page.goto(LIST_URL);
+  await page.clock.runFor(8_000);
+  await expectChicagoBarList(page);
+});
+
+test("shared map URL frames Chicago", async ({ page, context }) => {
+  await context.setGeolocation({ latitude: 40.7128, longitude: -74.006 });
+  await context.grantPermissions(["geolocation"]);
+  await page.goto(MAP_URL);
+  await expect(page.getByRole("button", { name: "Map", exact: true })).toHaveAttribute("aria-pressed", "true", { timeout: 20000 });
+  await expect(page).not.toHaveURL(/[?&]view=/);
+  await expect(page.getByTestId("map-empty")).toHaveCount(0);
+  const caption = page.getByTestId("map-caption");
+  await expect(caption).toHaveText(/[\d,]+ screen/, { timeout: 20000 });
+  await expect(caption).not.toHaveText(/No screens in view/);
+  const map = page.locator(MAP);
+  await expect.poll(async () => {
+    const south = Number(await map.getAttribute("data-south"));
+    const north = Number(await map.getAttribute("data-north"));
+    const west = Number(await map.getAttribute("data-west"));
+    const east = Number(await map.getAttribute("data-east"));
+    const lat = (south + north) / 2;
+    const lng = (west + east) / 2;
+    return lat > 41.4 && lat < 42.3 && lng < -87.2 && lng > -88.2;
+  }, { timeout: 20000 }).toBe(true);
+});
+
+test("toggling Map and List keeps filters, and back, forward, and reload restore them", async ({ page }) => {
+  await page.goto(LIST_URL);
+  await expectChicagoBarList(page);
+
+  await page.getByRole("button", { name: "Map", exact: true }).click();
+  await expect(page).toHaveURL(/city=Chicago/);
+  await expect(page).toHaveURL(/venue=bar/);
+  await expect(page).not.toHaveURL(/[?&]view=/);
+  await expect(page.getByRole("button", { name: "Map", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("map-caption")).toBeVisible({ timeout: 20000 });
+
+  await page.getByRole("button", { name: "List", exact: true }).click();
+  await expect(page).toHaveURL(/view=list/);
+  await expect(page.getByRole("button", { name: "List", exact: true })).toHaveAttribute("aria-pressed", "true");
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(/[?&]view=/);
+  await expect(page).toHaveURL(/city=Chicago/);
+  await expect(page).toHaveURL(/venue=bar/);
+  await expect(page.getByRole("button", { name: "Map", exact: true })).toHaveAttribute("aria-pressed", "true");
+
+  await page.goForward();
+  await expect(page).toHaveURL(/view=list/);
+  await expectChicagoBarList(page);
+
+  await page.reload();
+  await expectChicagoBarList(page);
+  await expect(page.getByLabel("Filter by city")).toHaveValue("Chicago");
+  await expect(page.getByLabel("Filter by venue type")).toHaveValue("bar");
+});
+
+test("sign-in redirect keeps the shared list query", async ({ browser }) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(LIST_URL);
+  await page.waitForURL(/\/sign-in/, { timeout: 20000 });
+  const next = new URL(page.url()).searchParams.get("next") ?? "";
+  expect(next).toContain("city=Chicago");
+  expect(next).toContain("venue=bar");
+  expect(next).toContain("view=list");
+  await context.close();
+});

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -24,6 +24,9 @@ import {
   bboxAround, fetchFilters, fetchList, screensByIds, searchPlace,
   type AreaResult, type Bbox, type CityOption, type PlaceHit, type PlaceSearch, type VenueOption,
 } from "@/lib/book-api";
+import {
+  bookParamsEqual, readBookParams, serializeBookParams, type BookParams,
+} from "@/lib/book-params";
 
 const STEPS = ["Screens", "Dates", "Creative", "Review"] as const;
 const MAX_UPLOAD_MB = 50;
@@ -65,12 +68,17 @@ export default function BookPage() {
   const [selected, setSelected] = useState<Map<string, number>>(new Map());
   /** Details for screens we have seen (clicked, listed, chips). */
   const [meta, setMeta] = useState<Map<string, Screen>>(new Map());
-  const [view, setView] = useState<"list" | "map">("map");
-  const [city, setCity] = useState<string | null>(null);
-  const [venue, setVenue] = useState<string | null>(null);
+  // Read the shareable URL during the first client render. Prerender has no
+  // window, so a layout effect adopts the real query before any passive effect
+  // can write history — otherwise the writer commits the default map view and
+  // replaceState(null) strips ?view=list before it is restored.
+  const [urlState] = useState(readBookParams);
+  const [view, setView] = useState<"list" | "map">(urlState.view);
+  const [city, setCity] = useState<string | null>(urlState.city);
+  const [venue, setVenue] = useState<string | null>(urlState.venue);
   const [cityOpts, setCityOpts] = useState<CityOption[]>([]);
   const [venueOpts, setVenueOpts] = useState<VenueOption[]>([]);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(urlState.query);
   const [hit, setHit] = useState<SearchHit | null>(null);
   const [noMatch, setNoMatch] = useState(false);
   const [suggestions, setSuggestions] = useState<PlaceHit[]>([]);
@@ -91,7 +99,7 @@ export default function BookPage() {
   const [list, setList] = useState<{ total: number; rows: Screen[] } | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [chips, setChips] = useState<Screen[]>([]);
-  const urlReady = useRef(false);
+  const [urlReady, setUrlReady] = useState(false);
 
   const [today, setToday] = useState(() => localTodayISO());
   const [startDate, setStartDate] = useState(() => localTodayISO());
@@ -177,27 +185,43 @@ export default function BookPage() {
     if (step === 1 || step === 3) refreshFlightRef.current();
   }, [step]);
 
-  // Filters, search and view come from the URL so a filtered view is shareable.
-  useEffect(() => {
-    const u = new URLSearchParams(window.location.search);
-    if (u.get("city")) setCity(u.get("city"));
-    if (u.get("venue")) setVenue(u.get("venue"));
-    if (u.get("q")) setQuery(u.get("q") ?? "");
-    if (u.get("view") === "list") setView("list");
-    urlReady.current = true;
+  // Adopt the URL before passive effects. Static export hydrates the default
+  // map state; writing that default would replaceState the query away.
+  useLayoutEffect(() => {
+    const p = readBookParams();
+    setCity(p.city);
+    setVenue(p.venue);
+    setQuery(p.query);
+    setView(p.view);
+    setUrlReady(true);
   }, []);
 
   useEffect(() => {
-    if (!urlReady.current) return;
-    const u = new URLSearchParams(window.location.search);
-    const set = (k: string, v: string | null) => (v ? u.set(k, v) : u.delete(k));
-    set("city", city);
-    set("venue", venue);
-    set("q", query.trim() || null);
-    set("view", view === "list" ? "list" : null);
-    const qs = u.toString();
-    window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
-  }, [city, venue, query, view]);
+    const onPop = () => {
+      const p = readBookParams();
+      setCity(p.city);
+      setVenue(p.venue);
+      setQuery(p.query);
+      setView(p.view);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  useEffect(() => {
+    if (!urlReady) return;
+    const desired: BookParams = { city, venue, query, view };
+    const current = readBookParams();
+    if (bookParamsEqual(current, desired)) return;
+    const qs = serializeBookParams(window.location.search, desired);
+    const path = `${window.location.pathname}${qs ? `?${qs}` : ""}`;
+    // Keep Next's history.state. Passing null wipes __NA and the patched
+    // replaceState syncs the router to a stripped /book/.
+    const state = window.history.state;
+    const discrete = current.view !== desired.view || current.city !== desired.city || current.venue !== desired.venue;
+    if (discrete) window.history.pushState(state, "", path);
+    else window.history.replaceState(state, "", path);
+  }, [urlReady, city, venue, query, view]);
 
   // Where to start: the advertiser's location. Glo is local.
   useEffect(() => {
@@ -236,8 +260,11 @@ export default function BookPage() {
   }, []);
 
   useEffect(() => {
-    if (origin && !lastView.current) lastView.current = { center: [origin.lat, origin.lng], zoom: LOCAL_ZOOM };
-  }, [origin]);
+    // A city filter owns the viewport. Seeding New York here first would make
+    // the list query the fallback bbox (Chicago filters × NYC = 0 screens).
+    if (!origin || lastView.current || city) return;
+    lastView.current = { center: [origin.lat, origin.lng], zoom: LOCAL_ZOOM };
+  }, [origin, city]);
 
   // Filter options. Venues cascade from the chosen city.
   useEffect(() => {
@@ -283,15 +310,17 @@ export default function BookPage() {
     if (c) pointMap({ bounds: { minLat: c.min_lat, minLng: c.min_lng, maxLat: c.max_lat, maxLng: c.max_lng } });
   }
 
-  // A city arriving from the URL: fly there once options are known.
+  // A city arriving from the URL: frame it as soon as options load. Do not
+  // wait for geolocation — that fallback is New York and used to win the race.
   const flewToUrlCity = useRef(false);
   useEffect(() => {
-    if (flewToUrlCity.current || !city || !cityOpts.length || !origin) return;
-    flewToUrlCity.current = true;
+    if (flewToUrlCity.current || !city || !cityOpts.length) return;
     const c = cityOpts.find((o) => o.city === city);
-    if (c) pointMap({ bounds: { minLat: c.min_lat, minLng: c.min_lng, maxLat: c.max_lat, maxLng: c.max_lng } });
+    if (!c) return;
+    flewToUrlCity.current = true;
+    pointMap({ bounds: { minLat: c.min_lat, minLng: c.min_lng, maxLat: c.max_lat, maxLng: c.max_lng } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [city, cityOpts, origin]);
+  }, [city, cityOpts]);
 
   // Free-text search: 5-digit ZIP, neighborhood or city. Resolved server-side.
   // An ambiguous place query opens suggestions instead of moving the map.
@@ -392,7 +421,11 @@ export default function BookPage() {
     }
   }
 
-  const listArea: Bbox | null = area ?? (origin ? bboxAround(origin.lat, origin.lng, RADIUS_M) : null);
+  // While a chosen city has no bounds yet, refuse the New York fallback bbox.
+  const cityAreaPending = Boolean(city) && !area && (cityOpts.length === 0 || cityOpts.some((c) => c.city === city));
+  const listArea: Bbox | null = area ?? (cityAreaPending || !origin ? null : bboxAround(origin.lat, origin.lng, RADIUS_M));
+  const showList = view === "list" && listArea !== null;
+  const showMap = view === "map" && origin !== null && !cityAreaPending;
   const filters = useMemo(() => ({ city, venue }), [city, venue]);
 
   // List view: one page of the current area at a time, same filters as the map.
@@ -767,7 +800,7 @@ export default function BookPage() {
           </div>
 
           {loadErr && <p className="text-sm text-red-400 mb-3">{loadErr}</p>}
-          {!origin && !loadErr && (
+          {!loadErr && !showList && !showMap && (
             <div className="flex items-center gap-2 text-ink-400 text-sm py-10 justify-center"><Loader2 size={15} className="animate-spin" /> Loading screens…</div>
           )}
 
@@ -796,7 +829,7 @@ export default function BookPage() {
             </p>
           )}
 
-          {origin && view === "map" && (
+          {showMap && (
             <div>
               <BookMap
                 filters={filters}
@@ -849,7 +882,7 @@ export default function BookPage() {
             </div>
           )}
 
-          {origin && view === "list" && (
+          {showList && (
             <div>
               <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                 <p className="text-[12px] text-ink-400" data-testid="list-caption">
@@ -1195,7 +1228,7 @@ function ToggleBtn({ active, onClick, icon: Icon, label }: {
   active: boolean; onClick: () => void; icon: React.ComponentType<{ size?: number }>; label: string;
 }) {
   return (
-    <button type="button" onClick={onClick}
+    <button type="button" onClick={onClick} aria-pressed={active}
       className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-medium ${
         active ? "bg-cy-400/15 text-cy-300" : "text-ink-400 hover:text-ink-100"
       }`}>
