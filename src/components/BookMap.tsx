@@ -18,6 +18,15 @@ export type MapFocus =
   | { key: number; center: [number, number]; zoom: number }
   | { key: number; bounds: Bbox };
 
+function applyMapFocus(map: import("leaflet").Map, focus: MapFocus) {
+  if ("bounds" in focus) {
+    const b = focus.bounds;
+    map.fitBounds([[b.minLat, b.minLng], [b.maxLat, b.maxLng]], { padding: [30, 30], maxZoom: 15 });
+  } else {
+    map.setView(focus.center, focus.zoom);
+  }
+}
+
 export type Viewport = { bbox: Bbox; zoom: number; center: [number, number]; total: number; live: boolean };
 
 type DrawState = {
@@ -111,6 +120,10 @@ export default function BookMap({
   onSelectManyRef.current = onSelectMany;
   const onViewportRef = useRef(onViewport);
   onViewportRef.current = onViewport;
+  // Leaflet is created asynchronously. A focus that arrives first used to be
+  // dropped because the effect bailed on a null mapRef and never re-ran.
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
 
   const [result, setResult] = useState<MapResult | null>(null);
   const [loadingMap, setLoadingMap] = useState(true);
@@ -313,6 +326,7 @@ export default function BookMap({
       map.setView(initial.center, initial.zoom);
       applyNationalFloor(map, Lf);
       map.setMaxBounds(conusBounds(Lf));
+      if (focusRef.current) applyMapFocus(map, focusRef.current);
 
       // The last zoom-out step frames the whole country. A plain zoomOut would
       // keep the current centre (usually New York) and leave the West off-screen
@@ -436,16 +450,12 @@ export default function BookMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.city, filters.venue]);
 
-  // Fly to a search hit or a chosen city.
+  // Fly to a search hit or a chosen city. If the map is still being created,
+  // init applies focusRef once Leaflet exists.
   useEffect(() => {
     const map = mapRef.current;
     if (!focus || !map) return;
-    if ("bounds" in focus) {
-      const b = focus.bounds;
-      map.fitBounds([[b.minLat, b.minLng], [b.maxLat, b.maxLng]], { padding: [30, 30], maxZoom: 15 });
-    } else {
-      map.setView(focus.center, focus.zoom);
-    }
+    applyMapFocus(map, focus);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus?.key]);
 
