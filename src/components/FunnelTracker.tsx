@@ -1,7 +1,7 @@
 "use client";
 import { useEffect } from "react";
 import { useSession } from "@/lib/auth-client";
-import { captureFunnelParams, funnel, setFunnelEmail } from "@/lib/funnel";
+import { captureFunnelParams, funnel, setFunnelUser } from "@/lib/funnel";
 
 /** Ties the signed-in user to their website visitor ID and logs account creation / return visits. */
 export function FunnelTracker() {
@@ -9,7 +9,7 @@ export function FunnelTracker() {
   useEffect(() => { captureFunnelParams(); }, []);
   useEffect(() => {
     if (!user) return;
-    setFunnelEmail(user.email);
+    setFunnelUser(user.email, user.id);
     const provider = String(user.app_metadata?.provider || "email");
     const ageMin = (Date.now() - new Date(user.created_at).getTime()) / 60000;
     if (ageMin < 60) funnel("account_created", provider, `forever:acct_${user.id}`);

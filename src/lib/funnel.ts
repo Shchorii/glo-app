@@ -39,7 +39,8 @@ function visitorId(): string {
 }
 
 let email = "";
-export function setFunnelEmail(e: string | null | undefined) { email = (e || "").trim().toLowerCase(); }
+let uid = "";
+export function setFunnelUser(e: string | null | undefined, id?: string | null) { email = (e || "").trim().toLowerCase(); uid = id || ""; }
 
 /**
  * Send a funnel event.
@@ -62,6 +63,7 @@ export function funnel(event: string, detail = "", once = ""): void {
       detail: String(detail).slice(0, 120),
       vid: visitorId(),
       email,
+      uid,
       campaign_id: ls(SRC_KEY) || "organic|src:app",
       url: window.location.href,
       referrer: document.referrer,
