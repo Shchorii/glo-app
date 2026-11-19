@@ -4,11 +4,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEve
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  countScreensNear, createCampaign, uploadCreative, addCreativeRenditions, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
+  countScreensNear, createCampaign, listMyCampaigns, uploadCreative, addCreativeRenditions, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
   type Screen, type Creative,
 } from "@/lib/db";
 import { creativeAttachError } from "@/lib/moderation";
 import { useSession } from "@/lib/auth-client";
+import { funnel } from "@/lib/funnel";
+import { isPaidLiveStatus } from "@/lib/moderation";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import BookMap, { type MapFocus, type Viewport } from "@/components/BookMap";
 import { DemoBadge } from "@/components/DemoBadge";
@@ -183,6 +185,7 @@ export default function BookPage() {
 
   useEffect(() => {
     if (step === 1 || step === 3) refreshFlightRef.current();
+    funnel(step === 0 ? "book_start" : "book_step", STEPS[step], `session:book_${step}`);
   }, [step]);
 
   // Adopt the URL before passive effects. Static export hydrates the default
@@ -628,6 +631,14 @@ export default function BookPage() {
         status,
       });
       setDoneId(id);
+      const what = `${fmtUsd(total)} · ${selectedIds.length} screens · ${days}d`;
+      if (status === "draft") funnel("campaign_saved", what, `forever:draft_${id}`);
+      else {
+        funnel("campaign_reserved", what, `forever:res_${id}`);
+        listMyCampaigns().then((all) => {
+          if (all.some((c) => c.id !== id && isPaidLiveStatus(c.status as never))) funnel("repeat_booking", what, `forever:rep_${id}`);
+        }).catch(() => {});
+      }
     } catch (e) {
       setSaveErr(e instanceof Error ? e.message : String(e));
     } finally {

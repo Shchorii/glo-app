@@ -1,6 +1,7 @@
 "use client";
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { funnel } from "@/lib/funnel";
 import { Loader2 } from "lucide-react";
 import { getSupabase } from "@/lib/supabase";
 import { useSession } from "@/lib/auth-client";
@@ -93,6 +94,7 @@ function OnboardingForm() {
     }).eq("id", user.id);
     setSaving(false);
     if (error) { setError(error.message || "Could not save. Please try again."); return; }
+    funnel("onboarding_done", `${f.business_category} ${f.business_zip}`.trim(), `forever:onb_${user.id}`);
     router.replace(next);
   }
 

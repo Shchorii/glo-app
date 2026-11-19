@@ -12,6 +12,7 @@ import {
 import { creativeAttachError, isPaidLiveStatus } from "@/lib/moderation";
 import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock, Trash2, Timer, RefreshCw } from "lucide-react";
 import { daypartSummary } from "@/lib/dayparts";
+import { funnel } from "@/lib/funnel";
 import { DemoBadge } from "@/components/DemoBadge";
 
 const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
@@ -34,6 +35,13 @@ function CampaignView() {
   const [paying, setPaying] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!c || c === "loading") return;
+    const what = `${c.id} · ${c.total_usd}`;
+    if (justPaid || ["pending_review", "scheduled", "live", "completed"].includes(c.status)) funnel("paid", what, `forever:paid_${c.id}`);
+    if (c.status === "scheduled" || c.status === "live") funnel("campaign_live", what, `forever:live_${c.id}`);
+    if (c.status === "completed") funnel("campaign_completed", what, `forever:done_${c.id}`);
+  }, [c, justPaid]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showReplace, setShowReplace] = useState(false);
@@ -129,6 +137,7 @@ function CampaignView() {
     if (!c || c === "loading") return;
     setPaying(true); setErr(null);
     try {
+      funnel("checkout_click", `${c.id} · ${c.total_usd}`, `session:pay_${c.id}`);
       const url = await startCheckout(c.id);
       window.location.href = url;
     } catch (e) {

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { SupportChat } from "@/components/SupportChat";
 import { FloatingCreatives } from "@/components/FloatingCreatives";
 import { Analytics } from "@/components/Analytics";
+import { FunnelTracker } from "@/components/FunnelTracker";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <Analytics />
+        <FunnelTracker />
         <div className="ambient-bg" />
         <div className="grid-bg" />
         <FloatingCreatives />
