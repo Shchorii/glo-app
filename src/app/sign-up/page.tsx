@@ -6,10 +6,13 @@ import { getSupabase } from "@/lib/supabase";
 import { GloMark } from "@/components/Logo";
 import { Loader2 } from "lucide-react";
 import { SocialAuth } from "@/components/SocialAuth";
+import { PROMO } from "@/lib/promo";
 
 function SignUpForm() {
   const router = useRouter();
-  const nextUrl = useSearchParams().get("next") || "/studio";
+  const params = useSearchParams();
+  const nextUrl = params.get("next") || "/studio";
+  const promo = params.get("promo") === PROMO ? PROMO : "";
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,7 +24,7 @@ function SignUpForm() {
     setLoading(true); setError(null);
     const sb = getSupabase();
     if (!sb) { setLoading(false); setError("Sign-up is not configured in this build."); return; }
-    const { error } = await sb.auth.signUp({ email, password, options: { data: { full_name: name } } });
+    const { error } = await sb.auth.signUp({ email, password, options: { data: promo ? { full_name: name, promo, promo_at: new Date().toISOString() } : { full_name: name } } });
     setLoading(false);
     if (error) { setError(error.message || "Could not create account"); return; }
     router.push(`/onboarding?next=${encodeURIComponent(nextUrl)}`);

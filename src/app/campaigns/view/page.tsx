@@ -13,6 +13,8 @@ import { creativeAttachError, isPaidLiveStatus } from "@/lib/moderation";
 import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock, Trash2, Timer, RefreshCw } from "lucide-react";
 import { daypartSummary } from "@/lib/dayparts";
 import { funnel } from "@/lib/funnel";
+import { PROMO, promoCredit } from "@/lib/promo";
+import { useSession } from "@/lib/auth-client";
 import { DemoBadge } from "@/components/DemoBadge";
 
 const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
@@ -31,6 +33,7 @@ function CampaignView() {
   const router = useRouter();
   const id = params.get("id");
   const justPaid = params.get("paid") === "1";
+  const { user: me } = useSession();
   const [c, setC] = useState<CampaignDetail | null | "loading">("loading");
   const [paying, setPaying] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
@@ -214,8 +217,21 @@ function CampaignView() {
             </div>
           </div>
           <div className="text-right shrink-0">
-            <div className="text-2xl font-semibold text-ink-50 tabular-nums">{fmtUsd(c.total_usd)}</div>
-            <div className="text-[11px] text-ink-500">{c.status === "pending_payment" ? "due at checkout" : "total"}</div>
+            {(() => {
+              const credit = c.status === "pending_payment" && me?.user_metadata?.promo === PROMO ? promoCredit(c.total_usd) : 0;
+              return credit > 0 ? (
+                <>
+                  <div className="text-[13px] text-ink-500 line-through tabular-nums">{fmtUsd(c.total_usd)}</div>
+                  <div className="text-2xl font-semibold text-ink-50 tabular-nums">{fmtUsd(c.total_usd - credit)}</div>
+                  <div className="text-[11px] text-lime-300">Includes {fmtUsd(credit)} Glo credit · due at checkout</div>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-semibold text-ink-50 tabular-nums">{fmtUsd(c.total_usd)}</div>
+                  <div className="text-[11px] text-ink-500">{c.status === "pending_payment" ? "due at checkout" : "total"}</div>
+                </>
+              );
+            })()}
           </div>
         </div>
 

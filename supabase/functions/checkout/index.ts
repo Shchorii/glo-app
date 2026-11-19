@@ -131,6 +131,23 @@ Deno.serve(async (req) => {
 
     const stripe = new Stripe(stripeKey, { httpClient: Stripe.createFetchHttpClient() });
 
+    // Launch offer (we-are-glo.com/offer, ?promo=10on100 stored on the account): $10 per full $100.
+    // KEEP IN SYNC with src/lib/promo.ts
+    const credit = user.user_metadata?.promo === "10on100" ? Math.floor(total / 100) * 10 : 0;
+    const charged = Math.round((total - credit) * 100) / 100;
+    let discounts: { coupon: string }[] | undefined;
+    if (credit > 0) {
+      const coupon = await stripe.coupons.create({
+        amount_off: Math.round(credit * 100),
+        currency: "usd",
+        duration: "once",
+        max_redemptions: 1,
+        name: `Glo credit ($10 per $100)`,
+        metadata: { campaign_id: c.id, user_id: user.id, promo: "10on100" },
+      });
+      discounts = [{ coupon: coupon.id }];
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       line_items: [
@@ -147,10 +164,11 @@ Deno.serve(async (req) => {
           quantity: 1,
         },
       ],
+      discounts,
       success_url: `${APP_BASE}/campaigns/view/?id=${c.id}&paid=1`,
       cancel_url: `${APP_BASE}/campaigns/view/?id=${c.id}`,
       customer_email: user.email ?? undefined,
-      metadata: { campaign_id: c.id, user_id: user.id },
+      metadata: { campaign_id: c.id, user_id: user.id, glo_credit_usd: String(credit) },
     });
 
     // Keep the stored total honest and record the payment attempt.
@@ -161,7 +179,7 @@ Deno.serve(async (req) => {
       campaign_id: c.id,
       user_id: user.id,
       stripe_session_id: session.id,
-      amount_usd: total,
+      amount_usd: charged,
       currency: "usd",
       status: "created",
     });
