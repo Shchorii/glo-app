@@ -23,7 +23,19 @@ function googleAdsSignup(userId: string) {
 /** Ties the signed-in user to their website visitor ID and logs account creation / return visits. */
 export function FunnelTracker() {
   const { user } = useSession();
-  useEffect(() => { captureFunnelParams(); rememberPromoFromUrl(); }, []);
+  useEffect(() => {
+    captureFunnelParams(); rememberPromoFromUrl();
+    // Arrived from the button in a Glo email (gsrc=email|src:<which email>|med:email).
+    // The link carries the person's site visitor ID and email, so the click joins their row.
+    const q = new URLSearchParams(window.location.search);
+    const g = q.get("gsrc") || "";
+    if (g.startsWith("email|")) {
+      const e = q.get("email");
+      if (e) setFunnelUser(e);
+      const which = g.split("|").find((p) => p.startsWith("src:"))?.slice(4) || "email";
+      funnel("email_click", which, `session:email_click_${which}`);
+    }
+  }, []);
   useEffect(() => {
     if (!user) return;
     setFunnelUser(user.email, user.id);
