@@ -184,8 +184,14 @@ export default function BookPage() {
 
   useEffect(() => {
     if (step === 1 || step === 3) refreshFlightRef.current();
-    funnel(step === 0 ? "book_start" : "book_step", STEPS[step], `session:book_${step}`);
   }, [step]);
+
+  // Funnel beacons only for a signed-in user. Logged-out visitors are
+  // redirected to /sign-in by the auth gate above, so they never really start.
+  useEffect(() => {
+    if (loading || (isSupabaseConfigured && !user)) return;
+    funnel(step === 0 ? "book_start" : "book_step", STEPS[step], `session:book_${step}`);
+  }, [step, loading, user]);
 
   // Adopt the URL before passive effects. Static export hydrates the default
   // map state; writing that default would replaceState the query away.
