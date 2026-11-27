@@ -32,6 +32,12 @@ export function FunnelTracker() {
     if (g.startsWith("email|")) {
       const e = q.get("email");
       if (e) setFunnelUser(e);
+      // Drop the email from the address bar so it isn't shared, bookmarked or sent on.
+      if (e) {
+        q.delete("email");
+        const qs = q.toString();
+        window.history.replaceState(window.history.state, "", window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash);
+      }
       const which = g.split("|").find((p) => p.startsWith("src:"))?.slice(4) || "email";
       funnel("email_click", which, `session:email_click_${which}`);
     }

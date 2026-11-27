@@ -62,6 +62,11 @@ function SignUpForm() {
               {loading ? <Loader2 className="animate-spin" size={16} /> : "Create account"}
             </button>
           </form>
+          <p className="text-xs text-ink-500 mt-4 text-center">
+            By creating an account you agree to our{" "}
+            <a href="https://we-are-glo.com/terms" target="_blank" rel="noreferrer" className="underline hover:text-ink-300">Terms</a> and{" "}
+            <a href="https://we-are-glo.com/privacy" target="_blank" rel="noreferrer" className="underline hover:text-ink-300">Privacy Policy</a>.
+          </p>
           <p className="text-sm text-ink-400 mt-5 text-center">
             Already have one? <Link href={`/sign-in${nextUrl === "/studio" ? "" : `?next=${encodeURIComponent(nextUrl)}`}`} className="text-cy-300 hover:text-cy-200">Sign in</Link>
           </p>
