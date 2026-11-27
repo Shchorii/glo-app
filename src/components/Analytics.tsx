@@ -11,6 +11,15 @@ const GA_MEASUREMENT_ID = "G-L1WPV7E16V";
 export const GOOGLE_ADS_ID = "AW-18584979940";
 export const GOOGLE_ADS_SIGNUP_LABEL = "R1F0CMHK1LsdEOSTgZ5F";
 
+/** Query params that can carry personal data (the welcome email link has ?email=). Never sent to Google. */
+const PII_PARAMS = ["email", "e"];
+
+function cleanQuery(query: string): string {
+  const q = new URLSearchParams(query);
+  PII_PARAMS.forEach((k) => q.delete(k));
+  return q.toString();
+}
+
 function PageviewTracker() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -18,11 +27,11 @@ function PageviewTracker() {
   useEffect(() => {
     const gtag = (window as unknown as { gtag?: (...args: unknown[]) => void }).gtag;
     if (typeof gtag !== "function") return;
-    const query = searchParams?.toString();
+    const query = cleanQuery(searchParams?.toString() || "");
     const pagePath = query ? `${pathname}?${query}` : pathname;
     gtag("event", "page_view", {
       page_path: pagePath,
-      page_location: window.location.href,
+      page_location: window.location.origin + pagePath,
       page_title: document.title,
     });
   }, [pathname, searchParams]);
@@ -41,6 +50,22 @@ export function Analytics() {
         {`
           window.dataLayer = window.dataLayer || [];
           function gtag(){dataLayer.push(arguments);}
+          (function(){
+            var tz=''; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch(e) {}
+            var eu = /^Europe\//.test(tz);
+            var adsOff = navigator.globalPrivacyControl === true || eu;
+            gtag('consent', 'default', {
+              analytics_storage: eu ? 'denied' : 'granted',
+              ad_storage: adsOff ? 'denied' : 'granted',
+              ad_user_data: adsOff ? 'denied' : 'granted',
+              ad_personalization: adsOff ? 'denied' : 'granted'
+            });
+            try {
+              var u = new URL(location.href);
+              ${JSON.stringify(PII_PARAMS)}.forEach(function(k){ u.searchParams.delete(k); });
+              gtag('set', { page_location: u.toString() });
+            } catch(e) {}
+          })();
           gtag('js', new Date());
           gtag('set', 'linker', { domains: ['we-are-glo.com', 'app.we-are-glo.com'], accept_incoming: true });
           gtag('config', '${GA_MEASUREMENT_ID}', { send_page_view: false });
