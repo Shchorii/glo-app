@@ -1,5 +1,14 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { GloMark } from "@/components/Logo";
+import { routeMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = routeMetadata({
+  path: "/",
+  title: { absolute: "Glo Campaign Manager — Neighborhood screen ads, live in 60 seconds" },
+  description: "Make creatives, pick city blocks, and launch cross-screen ad campaigns on neighborhood screens in 60 seconds. Glo Campaign Manager is in closed beta.",
+  index: true,
+});
 
 export default function Home() {
   return (
@@ -11,9 +20,6 @@ export default function Home() {
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-semibold tracking-tight text-ink-50 leading-[1.1]">
             Make creatives. Pick blocks. Watch them <span className="text-lime-400">glow.</span>
           </h1>
-          <p className="mt-4 text-ink-300 text-[15px] md:text-base">
-            Upload a Reel or TikTok. Glo remixes it for every screen — Connected TV, in-venue, sidewalk DOOH, premium pubs, mobile — and lights up the neighborhoods you pick.
-          </p>
         </div>
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3">
           <Link href="/sign-up" className="btn btn-primary justify-center">Get started →</Link>

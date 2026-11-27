@@ -5,6 +5,7 @@ import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
 import { GloMark } from "@/components/Logo";
 import { Loader2 } from "lucide-react";
+import { SocialAuth } from "@/components/SocialAuth";
 
 function SignInForm() {
   const router = useRouter();
@@ -27,6 +28,8 @@ function SignInForm() {
   }
 
   return (
+    <>
+    <SocialAuth next={nextUrl} mode="in" />
     <form onSubmit={onSubmit} className="space-y-4">
       <div>
         <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Email</label>
@@ -45,6 +48,10 @@ function SignInForm() {
         {loading ? <Loader2 className="animate-spin" size={16} /> : "Sign in"}
       </button>
     </form>
+    <p className="text-sm text-ink-400 mt-5 text-center">
+      New to Glo? <Link href={`/sign-up${nextUrl === "/studio" ? "" : `?next=${encodeURIComponent(nextUrl)}`}`} className="text-cy-300 hover:text-cy-200">Create an account</Link>
+    </p>
+    </>
   );
 }
 

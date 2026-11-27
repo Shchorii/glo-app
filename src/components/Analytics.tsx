@@ -7,6 +7,9 @@ import { Suspense, useEffect } from "react";
 // Dedicated "Glo App" GA4 property (G-L1WPV7E16V), separate from the
 // marketing "GLO" property so app usage reports stand on their own.
 const GA_MEASUREMENT_ID = "G-L1WPV7E16V";
+// Glo Google Ads account 714-725-0150. Sign-up conversion fires from FunnelTracker.
+export const GOOGLE_ADS_ID = "AW-18584979940";
+export const GOOGLE_ADS_SIGNUP_LABEL = "R1F0CMHK1LsdEOSTgZ5F";
 
 function PageviewTracker() {
   const pathname = usePathname();
@@ -39,7 +42,9 @@ export function Analytics() {
           window.dataLayer = window.dataLayer || [];
           function gtag(){dataLayer.push(arguments);}
           gtag('js', new Date());
+          gtag('set', 'linker', { domains: ['we-are-glo.com', 'app.we-are-glo.com'], accept_incoming: true });
           gtag('config', '${GA_MEASUREMENT_ID}', { send_page_view: false });
+          gtag('config', '${GOOGLE_ADS_ID}');
         `}
       </Script>
       <Suspense fallback={null}>

@@ -1,46 +1,131 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  listScreens, createCampaign, uploadCreative, daysBetween, fmtUsd,
+  countScreensNear, createCampaign, uploadCreative, addCreativeRenditions, listMyCreatives, signedCreativeUrl, daysBetween, fmtUsd,
   type Screen, type Creative,
 } from "@/lib/db";
+import { creativeAttachError } from "@/lib/moderation";
 import { useSession } from "@/lib/auth-client";
+import { funnel } from "@/lib/funnel";
 import { isSupabaseConfigured } from "@/lib/supabase";
-import BookMap from "@/components/BookMap";
-import { DAYPARTS, daypartMultiplier, daypartSummary } from "@/lib/dayparts";
-import { TemplateBuilder, renderTemplatePng, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
+import BookMap, { type MapFocus, type Viewport } from "@/components/BookMap";
+import { DemoBadge } from "@/components/DemoBadge";
+import { DAYPARTS, daypartMultiplier, daypartSummary, lateNightFrom } from "@/lib/dayparts";
+import { TemplateBuilder, renderTemplatePng, renderExtraRatios, CANVAS_W, CANVAS_H, type TemplateSpec } from "@/components/TemplateBuilder";
 import {
-  MapPin, List, Map as MapIcon, Monitor, Calendar, ImagePlus, Wand2,
-  ChevronLeft, ChevronRight, Loader2, CheckCircle2, Upload,
+  MapPin, List, Map as MapIcon, Monitor, Calendar, ImagePlus, Wand2, FolderOpen,
+  ChevronLeft, ChevronRight, Loader2, CheckCircle2, Upload, Search, X,
 } from "lucide-react";
+import { clampFlight, localTodayISO } from "@/lib/dates";
+import { ZIP_CENTROIDS } from "@/lib/zip-centroids";
+import {
+  bboxAround, fetchFilters, fetchList, screensByIds, searchPlace,
+  type AreaResult, type Bbox, type CityOption, type PlaceHit, type PlaceSearch, type VenueOption,
+} from "@/lib/book-api";
+import {
+  bookParamsEqual, readBookParams, serializeBookParams, type BookParams,
+} from "@/lib/book-params";
 
 const STEPS = ["Screens", "Dates", "Creative", "Review"] as const;
 const MAX_UPLOAD_MB = 50;
+/** How far around the advertiser we load inventory. Local, not national. */
+const RADIUS_M = 5000;
+/** Used when geolocation is denied or unavailable. */
+const FALLBACK = { lat: 40.7128, lng: -74.006, label: "New York" };
+/** Map zoom that shows roughly RADIUS_M around the advertiser. */
+const LOCAL_ZOOM = 13;
+const LIST_PAGE = 60;
+
+type SearchHit = { kind: "zip" | "city" | "neighborhood"; label: string; n: number };
+
+function asPlace(p: PlaceSearch): PlaceHit {
+  return {
+    kind: p.kind, label: p.label, city: p.city, n: p.n,
+    min_lat: p.min_lat, min_lng: p.min_lng, max_lat: p.max_lat, max_lng: p.max_lng,
+  };
+}
+
+function zoomForBounds(b: Bbox) {
+  const span = Math.max(b.maxLat - b.minLat, (b.maxLng - b.minLng) * 0.8, 0.005);
+  return Math.max(3, Math.min(15, Math.floor(Math.log2(360 / span))));
+}
 
 type CreativeChoice =
   | { kind: "none" }
   | { kind: "upload"; file: File }
-  | { kind: "template"; spec: TemplateSpec };
+  | { kind: "template"; spec: TemplateSpec }
+  | { kind: "library"; creative: Creative };
 
 export default function BookPage() {
   const router = useRouter();
   const { user, loading } = useSession();
 
   const [step, setStep] = useState(0);
-  const [screens, setScreens] = useState<Screen[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [view, setView] = useState<"list" | "map">("map");
-  const [city, setCity] = useState<string>("all");
-  const [venue, setVenue] = useState<string>("all");
+  /** id -> all-day price. Holds ids + an aggregate, never the full rows of a bulk selection. */
+  const [selected, setSelected] = useState<Map<string, number>>(new Map());
+  /** Details for screens we have seen (clicked, listed, chips). */
+  const [meta, setMeta] = useState<Map<string, Screen>>(new Map());
+  // Read the shareable URL during the first client render. Prerender has no
+  // window, so a layout effect adopts the real query before any passive effect
+  // can write history — otherwise the writer commits the default map view and
+  // replaceState(null) strips ?view=list before it is restored.
+  const [urlState] = useState(readBookParams);
+  const [view, setView] = useState<"list" | "map">(urlState.view);
+  const [city, setCity] = useState<string | null>(urlState.city);
+  const [venue, setVenue] = useState<string | null>(urlState.venue);
+  const [cityOpts, setCityOpts] = useState<CityOption[]>([]);
+  const [venueOpts, setVenueOpts] = useState<VenueOption[]>([]);
+  const [query, setQuery] = useState(urlState.query);
+  const [hit, setHit] = useState<SearchHit | null>(null);
+  const [noMatch, setNoMatch] = useState(false);
+  const [suggestions, setSuggestions] = useState<PlaceHit[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [activeSuggest, setActiveSuggest] = useState(0);
+  const searchWrapRef = useRef<HTMLDivElement>(null);
+  const [origin, setOrigin] = useState<{ lat: number; lng: number; label: string } | null>(null);
+  const [totalNear, setTotalNear] = useState<number | null>(null);
+  /** Set when the advertiser's own location had no inventory and we fell back. */
+  const [awayFrom, setAwayFrom] = useState<string | null>(null);
+  const [viewport, setViewport] = useState<Viewport | null>(null);
+  /** Area the List view shows: the map viewport, or wherever a search pointed. */
+  const [area, setArea] = useState<Bbox | null>(null);
+  const [focus, setFocus] = useState<MapFocus | null>(null);
+  const lastView = useRef<{ center: [number, number]; zoom: number } | null>(null);
+  const focusKey = useRef(0);
+  const [listPage, setListPage] = useState(0);
+  const [list, setList] = useState<{ total: number; rows: Screen[] } | null>(null);
+  const [listLoading, setListLoading] = useState(false);
+  const [chips, setChips] = useState<Screen[]>([]);
+  const [urlReady, setUrlReady] = useState(false);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState(today);
+  const [today, setToday] = useState(() => localTodayISO());
+  const [startDate, setStartDate] = useState(() => localTodayISO());
+  const [endDate, setEndDate] = useState(() => localTodayISO());
+  const [datesShifted, setDatesShifted] = useState(false);
   const [dayparts, setDayparts] = useState<string[]>([]); // empty = all day
+  const startRef = useRef(startDate);
+  const endRef = useRef(endDate);
+  startRef.current = startDate;
+  endRef.current = endDate;
+  const refreshFlightRef = useRef<() => void>(() => {});
+  refreshFlightRef.current = () => {
+    const t = localTodayISO();
+    setToday(t);
+    const next = clampFlight(startRef.current, endRef.current, t);
+    if (next.start !== startRef.current) {
+      startRef.current = next.start;
+      setStartDate(next.start);
+    }
+    if (next.end !== endRef.current) {
+      endRef.current = next.end;
+      setEndDate(next.end);
+    }
+    if (next.shifted) setDatesShifted(true);
+  };
 
   const [name, setName] = useState("");
   const [creative, setCreative] = useState<CreativeChoice>({ kind: "none" });
@@ -48,6 +133,10 @@ export default function BookPage() {
     preset: "glow", headline: "", subline: "", accent: "#22D3EE",
   });
 
+  const [reviewPreview, setReviewPreview] = useState<{ url: string; isVideo: boolean } | null>(null);
+  const [libItems, setLibItems] = useState<Creative[] | null>(null);
+  const [libUrls, setLibUrls] = useState<Record<string, string>>({});
+  const [showLib, setShowLib] = useState(false);
   const [saving, setSaving] = useState<"idle" | "draft" | "book">("idle");
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [doneId, setDoneId] = useState<string | null>(null);
@@ -55,75 +144,503 @@ export default function BookPage() {
   // Auth gate
   useEffect(() => {
     if (!loading && isSupabaseConfigured && !user) {
-      router.replace("/sign-in?next=/book");
+      const search = typeof window === "undefined" ? "" : window.location.search;
+      router.replace(`/sign-in?next=${encodeURIComponent("/book" + search)}`);
     }
   }, [loading, user, router]);
 
-  // Load screens
+  // A tab left open or restored from bfcache keeps the dates from when the
+  // page mounted. Shift that flight onto today. Midnight while the user is
+  // already on a step only moves "today", so Review can block a stale flight
+  // until they re-enter Dates.
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
-    listScreens().then(setScreens).catch((e) => setLoadErr(String(e?.message ?? e)));
+    const refresh = () => refreshFlightRef.current();
+    refresh();
+
+    let midnightTimer = 0;
+    const armMidnight = () => {
+      window.clearTimeout(midnightTimer);
+      const now = new Date();
+      const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      midnightTimer = window.setTimeout(() => {
+        setToday(localTodayISO());
+        armMidnight();
+      }, Math.max(0, nextMidnight.getTime() - now.getTime()));
+    };
+    armMidnight();
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const onPageShow = () => refresh();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      window.clearTimeout(midnightTimer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onPageShow);
+    };
   }, []);
 
-  const cities = useMemo(() => Array.from(new Set((screens ?? []).map((s) => s.city))), [screens]);
-  const venues = useMemo(() => Array.from(new Set((screens ?? []).map((s) => s.venue_type))), [screens]);
-  const filtered = useMemo(
-    () => (screens ?? []).filter((s) => (city === "all" || s.city === city) && (venue === "all" || s.venue_type === venue)),
-    [screens, city, venue]
-  );
-  const selectedScreens = useMemo(() => (screens ?? []).filter((s) => selected.has(s.id)), [screens, selected]);
-  const perDay = selectedScreens.reduce((sum, s) => sum + s.daily_price_usd, 0);
+  useEffect(() => {
+    if (step === 1 || step === 3) refreshFlightRef.current();
+  }, [step]);
+
+  // Funnel beacons only for a signed-in user. Logged-out visitors are
+  // redirected to /sign-in by the auth gate above, so they never really start.
+  useEffect(() => {
+    if (loading || (isSupabaseConfigured && !user)) return;
+    funnel(step === 0 ? "book_start" : "book_step", STEPS[step], `session:book_${step}`);
+  }, [step, loading, user]);
+
+  // Adopt the URL before passive effects. Static export hydrates the default
+  // map state; writing that default would replaceState the query away.
+  useLayoutEffect(() => {
+    const p = readBookParams();
+    setCity(p.city);
+    setVenue(p.venue);
+    setQuery(p.query);
+    setView(p.view);
+    setUrlReady(true);
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => {
+      const p = readBookParams();
+      setCity(p.city);
+      setVenue(p.venue);
+      setQuery(p.query);
+      setView(p.view);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  useEffect(() => {
+    if (!urlReady) return;
+    const desired: BookParams = { city, venue, query, view };
+    const current = readBookParams();
+    if (bookParamsEqual(current, desired)) return;
+    const qs = serializeBookParams(window.location.search, desired);
+    const path = `${window.location.pathname}${qs ? `?${qs}` : ""}`;
+    // Keep Next's history.state. Passing null wipes __NA and the patched
+    // replaceState syncs the router to a stripped /book/.
+    const state = window.history.state;
+    const discrete = current.view !== desired.view || current.city !== desired.city || current.venue !== desired.venue;
+    if (discrete) window.history.pushState(state, "", path);
+    else window.history.replaceState(state, "", path);
+  }, [urlReady, city, venue, query, view]);
+
+  // Where to start: the advertiser's location. Glo is local.
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    let done = false;
+
+    function start(lat: number, lng: number, label: string) {
+      if (done) return;
+      done = true;
+      countScreensNear(lat, lng, RADIUS_M)
+        .then((n) => {
+          // An empty map is a dead end: fall back to a city that has screens and say so.
+          if (n === 0 && (lat !== FALLBACK.lat || lng !== FALLBACK.lng)) {
+            setAwayFrom(label);
+            return countScreensNear(FALLBACK.lat, FALLBACK.lng, RADIUS_M).then((m) => {
+              setTotalNear(m);
+              setOrigin({ lat: FALLBACK.lat, lng: FALLBACK.lng, label: FALLBACK.label });
+            });
+          }
+          setTotalNear(n);
+          setOrigin({ lat, lng, label });
+        })
+        .catch((e) => setLoadErr(String(e?.message ?? e)));
+    }
+
+    if (typeof navigator !== "undefined" && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => start(pos.coords.latitude, pos.coords.longitude, "your location"),
+        () => start(FALLBACK.lat, FALLBACK.lng, FALLBACK.label),
+        { timeout: 6000, maximumAge: 300000 }
+      );
+      setTimeout(() => start(FALLBACK.lat, FALLBACK.lng, FALLBACK.label), 6500);
+    } else {
+      start(FALLBACK.lat, FALLBACK.lng, FALLBACK.label);
+    }
+  }, []);
+
+  useEffect(() => {
+    // A city filter owns the viewport. Seeding New York here first would make
+    // the list query the fallback bbox (Chicago filters × NYC = 0 screens).
+    if (!origin || lastView.current || city) return;
+    lastView.current = { center: [origin.lat, origin.lng], zoom: LOCAL_ZOOM };
+  }, [origin, city]);
+
+  // Filter options. Venues cascade from the chosen city.
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    let cancelled = false;
+    fetchFilters(city)
+      .then((f) => {
+        if (cancelled) return;
+        setCityOpts(f.cities);
+        setVenueOpts(f.venues);
+        if (venue && !f.venues.some((v) => v.venue_type === venue)) setVenue(null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [city]);
+
+  function pointMap(next: { center: [number, number]; zoom: number } | { bounds: Bbox }) {
+    focusKey.current += 1;
+    if ("bounds" in next) {
+      const b = next.bounds;
+      setFocus({ key: focusKey.current, bounds: b });
+      setArea(b);
+      lastView.current = { center: [(b.minLat + b.maxLat) / 2, (b.minLng + b.maxLng) / 2], zoom: zoomForBounds(b) };
+    } else {
+      setFocus({ key: focusKey.current, center: next.center, zoom: next.zoom });
+      setArea(bboxAround(next.center[0], next.center[1], 2500));
+      lastView.current = { center: next.center, zoom: next.zoom };
+    }
+    setListPage(0);
+  }
+
+  function choosePlace(p: PlaceHit) {
+    pointMap({ bounds: { minLat: p.min_lat, minLng: p.min_lng, maxLat: p.max_lat, maxLng: p.max_lng } });
+    setHit({ kind: p.kind, label: p.label, n: p.n });
+    setSuggestOpen(false);
+  }
+
+  function chooseCity(next: string | null) {
+    setCity(next);
+    setListPage(0);
+    const c = cityOpts.find((o) => o.city === next);
+    if (c) pointMap({ bounds: { minLat: c.min_lat, minLng: c.min_lng, maxLat: c.max_lat, maxLng: c.max_lng } });
+  }
+
+  // A city arriving from the URL: frame it as soon as options load. Do not
+  // wait for geolocation — that fallback is New York and used to win the race.
+  const flewToUrlCity = useRef(false);
+  useEffect(() => {
+    if (flewToUrlCity.current || !city || !cityOpts.length) return;
+    const c = cityOpts.find((o) => o.city === city);
+    if (!c) return;
+    flewToUrlCity.current = true;
+    pointMap({ bounds: { minLat: c.min_lat, minLng: c.min_lng, maxLat: c.max_lat, maxLng: c.max_lng } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [city, cityOpts]);
+
+  // Free-text search: 5-digit ZIP, neighborhood or city. Resolved server-side.
+  // An ambiguous place query opens suggestions instead of moving the map.
+  useEffect(() => {
+    const q = query.trim();
+    setNoMatch(false);
+    setSuggestOpen(false);
+    setSuggestions([]);
+    if (!q) {
+      setHit(null);
+      return;
+    }
+    if (!origin) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        if (/^\d{5}$/.test(q)) {
+          setSuggestions([]);
+          setSuggestOpen(false);
+          const c = ZIP_CENTROIDS[q];
+          if (!c) { if (!cancelled) { setHit(null); setNoMatch(true); } return; }
+          pointMap({ center: [c[0], c[1]], zoom: 14 });
+          const n = await countScreensNear(c[0], c[1], 2500);
+          if (!cancelled) setHit({ kind: "zip", label: q, n });
+          return;
+        }
+        if (q.length < 2) {
+          if (!cancelled) { setSuggestions([]); setSuggestOpen(false); }
+          return;
+        }
+        const p = await searchPlace(q);
+        if (cancelled) return;
+        if (!p) {
+          setHit(null);
+          setNoMatch(true);
+          setSuggestions([]);
+          setSuggestOpen(false);
+          return;
+        }
+        const options = [asPlace(p), ...(p.alternatives ?? [])];
+        if (p.ambiguous && options.length > 1) {
+          setHit(null);
+          setSuggestions(options);
+          setActiveSuggest(0);
+          setSuggestOpen(true);
+          return;
+        }
+        setSuggestions([]);
+        setSuggestOpen(false);
+        choosePlace(asPlace(p));
+      } catch {
+        if (!cancelled) {
+          setHit(null);
+          setNoMatch(true);
+          setSuggestions([]);
+          setSuggestOpen(false);
+        }
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, origin]);
+
+  useEffect(() => {
+    if (!suggestOpen) return;
+    function onPointerDown(e: MouseEvent) {
+      if (!searchWrapRef.current?.contains(e.target as Node)) setSuggestOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [suggestOpen]);
+
+  useEffect(() => {
+    if (!suggestOpen) return;
+    document.getElementById(`place-opt-${activeSuggest}`)?.scrollIntoView({ block: "nearest" });
+  }, [suggestOpen, activeSuggest]);
+
+  function onSearchKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Escape") {
+      if (!suggestOpen) return;
+      e.preventDefault();
+      setSuggestOpen(false);
+      return;
+    }
+    if (!suggestions.length) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!suggestOpen) { setSuggestOpen(true); setActiveSuggest(0); return; }
+      setActiveSuggest((i) => (i + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!suggestOpen) { setSuggestOpen(true); setActiveSuggest(suggestions.length - 1); return; }
+      setActiveSuggest((i) => (i - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === "Enter" && suggestOpen) {
+      e.preventDefault();
+      const pick = suggestions[activeSuggest] ?? suggestions[0];
+      if (pick) choosePlace(pick);
+    }
+  }
+
+  // While a chosen city has no bounds yet, refuse the New York fallback bbox.
+  const cityAreaPending = Boolean(city) && !area && (cityOpts.length === 0 || cityOpts.some((c) => c.city === city));
+  const listArea: Bbox | null = area ?? (cityAreaPending || !origin ? null : bboxAround(origin.lat, origin.lng, RADIUS_M));
+  const showList = view === "list" && listArea !== null;
+  const showMap = view === "map" && origin !== null && !cityAreaPending;
+  const filters = useMemo(() => ({ city, venue }), [city, venue]);
+
+  // List view: one page of the current area at a time, same filters as the map.
+  useEffect(() => {
+    if (view !== "list" || !listArea) return;
+    const ctrl = new AbortController();
+    setListLoading(true);
+    fetchList(listArea, filters, listPage * LIST_PAGE, LIST_PAGE, ctrl.signal)
+      .then((r) => { setList(r); remember(r.rows); })
+      .catch(() => {})
+      .finally(() => { if (!ctrl.signal.aborted) setListLoading(false); });
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, listArea?.minLat, listArea?.minLng, listArea?.maxLat, listArea?.maxLng, filters, listPage]);
+
+  // Suggestion chips under the map: the cheapest screens in view.
+  useEffect(() => {
+    if (view !== "map" || !viewport) return;
+    const ctrl = new AbortController();
+    fetchList(viewport.bbox, filters, 0, 12, ctrl.signal)
+      .then((r) => { setChips(r.rows); remember(r.rows); })
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [view, viewport, filters]);
+
+  function remember(rows: Screen[]) {
+    if (!rows.length) return;
+    setMeta((prev) => {
+      const next = new Map(prev);
+      rows.forEach((r) => next.set(r.id, r));
+      return next;
+    });
+  }
+
+  // Source and names for a selection that arrived as ids (zone pick). One page is
+  // enough to spot demo inventory; book_screens_by_ids caps at 200.
+  useEffect(() => {
+    if (selected.size === 0) return;
+    const missing = [...selected.keys()].filter((id) => !meta.has(id));
+    if (!missing.length) return;
+    if (selected.size > 200 && selected.size - missing.length >= 200) return;
+    screensByIds(missing.slice(0, 200)).then(remember).catch(() => {});
+  }, [selected, meta]);
+
+  // Load the library the first time the picker opens
+  useEffect(() => {
+    if (!showLib || libItems !== null) return;
+    listMyCreatives()
+      .then(async (all) => {
+        setLibItems(all);
+        const entries = await Promise.all(all.map(async (c) => [c.id, await signedCreativeUrl(c.storage_path)] as const));
+        setLibUrls(Object.fromEntries(entries.filter(([, u]) => u) as [string, string][]));
+      })
+      .catch(() => setLibItems([]));
+  }, [showLib, libItems]);
+
+  // Build a creative preview for the review step
+  useEffect(() => {
+    if (step !== 3) return;
+    let url: string | null = null;
+    let cancelled = false;
+    (async () => {
+      if (creative.kind === "upload") {
+        url = URL.createObjectURL(creative.file);
+        if (!cancelled) setReviewPreview({ url, isVideo: creative.file.type.startsWith("video/") });
+      } else if (creative.kind === "template") {
+        const blob = await renderTemplatePng(tplSpec);
+        url = URL.createObjectURL(blob);
+        if (!cancelled) setReviewPreview({ url, isVideo: false });
+      } else if (creative.kind === "library") {
+        const signed = await signedCreativeUrl(creative.creative.storage_path);
+        if (!cancelled && signed) setReviewPreview({ url: signed, isVideo: creative.creative.storage_path.endsWith(".mp4") });
+      } else {
+        setReviewPreview(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+      setReviewPreview(null);
+    };
+  }, [step, creative, tplSpec]);
+
+  const selectedIds = useMemo(() => [...selected.keys()], [selected]);
+  const demoCount = selectedIds.filter((id) => meta.get(id)?.source === "demo").length;
+  const reviewScreens = selectedIds
+    .slice(0, 12)
+    .map((id) => meta.get(id))
+    .filter((s): s is Screen => Boolean(s));
+  const perDay = useMemo(() => Math.round([...selected.values()].reduce((a, p) => a + p, 0) * 100) / 100, [selected]);
   const days = daysBetween(startDate, endDate);
   const dpMult = daypartMultiplier(dayparts);
   const total = Math.round(perDay * dpMult * days * 100) / 100;
+  // Picked screens first, then the remaining suggestions, so tapping one chip
+  // never hides the others (it used to look like only one screen could be picked).
+  const chipScreens = useMemo(() => {
+    const picked = selectedIds.slice(0, 12).map((id) => meta.get(id)).filter(Boolean) as Screen[];
+    const rest = chips.filter((s) => !selected.has(s.id));
+    return [...picked, ...rest];
+  }, [selectedIds, meta, chips, selected]);
+  const citiesByState = useMemo(() => {
+    const groups = new Map<string, CityOption[]>();
+    cityOpts.forEach((c) => {
+      const k = c.state || "Other";
+      groups.set(k, [...(groups.get(k) ?? []), c]);
+    });
+    return [...groups.entries()];
+  }, [cityOpts]);
 
   function toggleDaypart(id: string) {
     setDayparts((prev) => (prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id]));
   }
 
-  function toggle(id: string) {
+  function toggle(s: Screen) {
     setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      const next = new Map(prev);
+      if (next.has(s.id)) next.delete(s.id); else next.set(s.id, s.daily_price_usd);
+      return next;
+    });
+    remember([s]);
+  }
+
+  /** Union-add a server-side zone selection. */
+  function addMany(r: AreaResult) {
+    if (!r.ids.length) return;
+    setSelected((prev) => {
+      const next = new Map(prev);
+      r.ids.forEach((id, i) => next.set(id, r.prices[i]));
       return next;
     });
   }
 
+  const startInPast = startDate < today;
   const canNext =
     step === 0 ? selected.size > 0 :
-    step === 1 ? days > 0 :
+    step === 1 ? days > 0 && !startInPast :
     step === 2 ? (creative.kind !== "template" || tplSpec.headline.trim().length > 0) :
     false;
 
   async function resolveCreative(): Promise<Creative | null> {
+    if (creative.kind === "library") return creative.creative;
     if (creative.kind === "upload") {
       const file = creative.file;
       const ext = (file.name.split(".").pop() || "bin").toLowerCase();
       return await uploadCreative(file, { source: "upload", ext });
     }
     if (creative.kind === "template") {
+      // The parent creative stays the 9:16 render: moderation and campaign
+      // attachment both key off it, so that path is unchanged.
       const blob = await renderTemplatePng(tplSpec);
-      return await uploadCreative(blob, { source: "template", ext: "png", width: CANVAS_W, height: CANVAS_H });
+      const created = await uploadCreative(blob, {
+        source: "template", ext: "png", width: CANVAS_W, height: CANVAS_H,
+      });
+      // IDA-28: 80% of inventory is landscape, so render the other ratios too.
+      // Best effort by design, and awaited only so a slow upload cannot race
+      // the campaign insert. A failure here leaves the 9:16 creative usable.
+      await addCreativeRenditions(
+        created.id,
+        await renderExtraRatios(tplSpec),
+      );
+      return created;
     }
     return null;
   }
 
   async function save(status: "draft" | "pending_payment") {
+    const liveToday = localTodayISO();
+    if (startDate < liveToday) {
+      setToday(liveToday);
+      setSaveErr("Start date can't be in the past.");
+      return;
+    }
     setSaving(status === "draft" ? "draft" : "book");
     setSaveErr(null);
     try {
+      if (status === "pending_payment") {
+        // Zone picks arrive as ids. Resolve source before insert so a demo
+        // selection never becomes an orphan draft.
+        const missing = selectedIds.filter((id) => meta.get(id)?.source == null);
+        const fetched = missing.length ? await screensByIds(missing.slice(0, 200)) : [];
+        if (fetched.length) remember(fetched);
+        const hasDemo =
+          selectedIds.some((id) => meta.get(id)?.source === "demo") ||
+          fetched.some((s) => s.source === "demo");
+        if (hasDemo) throw new Error("Demo screens can't be booked yet. Remove them or save as draft.");
+      }
       const cr = await resolveCreative();
+      if (cr) {
+        const blocked = creativeAttachError(cr, status);
+        if (blocked) throw new Error(blocked);
+      }
       const id = await createCampaign({
-        name: name.trim() || `${selectedScreens[0]?.city ?? "Glo"} campaign`,
+        name: name.trim() || `${meta.get(selectedIds[0])?.city ?? city ?? "Glo"} campaign`,
         start_date: startDate,
         end_date: endDate,
-        screen_ids: [...selected],
+        screen_ids: selectedIds,
         creative_id: cr?.id ?? null,
         total_usd: total,
         dayparts,
         status,
       });
       setDoneId(id);
+      const what = `${fmtUsd(total)} · ${selectedIds.length} screens · ${days}d`;
+      if (status === "draft") funnel("campaign_saved", what, `forever:draft_${id}`);
+      else {
+        funnel("campaign_reserved", what, `forever:res_${id}`); // repeat bookings are reported server-side once paid (funnel-sync)
+      }
     } catch (e) {
       setSaveErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -145,10 +662,10 @@ export default function BookPage() {
           <CheckCircle2 size={40} className="mx-auto text-lime-300 mb-4" />
           <h2 className="text-xl font-semibold text-ink-50 mb-2">Campaign saved</h2>
           <p className="text-sm text-ink-400 mb-1">
-            {selected.size} screen{selected.size === 1 ? "" : "s"} · {days} day{days === 1 ? "" : "s"} · {fmtUsd(total)}
+            {selected.size.toLocaleString()} screen{selected.size === 1 ? "" : "s"} · {days} day{days === 1 ? "" : "s"} · {fmtUsd(total)}
           </p>
           <p className="text-sm text-ink-400 mb-6">
-            Your screens and dates are reserved. Complete payment from the campaign page to send it to review.
+            Your screens are held for 5 minutes. Complete payment now to lock them in; unpaid reservations release automatically.
           </p>
           <div className="flex justify-center gap-3">
             <Link href={`/campaigns/view?id=${doneId}`} className="btn btn-primary">View campaign</Link>
@@ -160,15 +677,15 @@ export default function BookPage() {
   }
 
   return (
-    <Shell>
+    <Shell demo={!viewport?.live}>
       {/* Stepper */}
-      <div className="flex items-center gap-1.5 sm:gap-3 mb-6 overflow-x-auto pb-1">
+      <div className="grid grid-cols-4 gap-1 sm:flex sm:items-center sm:gap-3 mb-6">
         {STEPS.map((label, i) => (
           <button
             key={label}
             type="button"
             onClick={() => i < step && setStep(i)}
-            className={`flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-full text-[12px] font-medium border ${
+            className={`flex items-center justify-center gap-0.5 min-w-0 px-0.5 py-1.5 sm:justify-start sm:gap-1.5 sm:shrink-0 sm:px-2.5 rounded-full text-[12px] font-medium border ${
               i === step
                 ? "bg-cy-400/15 text-cy-300 border-cy-400/40"
                 : i < step
@@ -176,10 +693,10 @@ export default function BookPage() {
                 : "text-ink-500 border-line-900"
             }`}
           >
-            <span className={`w-4.5 h-4.5 w-5 h-5 rounded-full text-[10px] flex items-center justify-center ${
+            <span className={`w-5 h-5 shrink-0 rounded-full text-[10px] flex items-center justify-center ${
               i <= step ? "bg-bg-900" : "bg-bg-900/50"
             }`}>{i + 1}</span>
-            {label}
+            <span className="truncate min-w-0">{label}</span>
           </button>
         ))}
       </div>
@@ -188,39 +705,178 @@ export default function BookPage() {
       {step === 0 && (
         <div>
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <div className="flex flex-wrap gap-2">
-              <select value={city} onChange={(e) => setCity(e.target.value)} className="px-3 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100">
+            <div className="flex flex-wrap gap-2 items-center">
+              <div className="relative z-[1100]" ref={searchWrapRef}>
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-500 pointer-events-none" />
+                <input
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setHit(null);
+                    setNoMatch(false);
+                    setSuggestions([]);
+                    setSuggestOpen(false);
+                  }}
+                  onKeyDown={onSearchKeyDown}
+                  onFocus={() => { if (suggestions.length > 1) setSuggestOpen(true); }}
+                  placeholder="ZIP, neighborhood or city"
+                  aria-label="Search screens by ZIP code, neighborhood or city"
+                  role="combobox"
+                  aria-expanded={suggestOpen}
+                  aria-controls="place-suggestions"
+                  aria-autocomplete="list"
+                  aria-activedescendant={suggestOpen ? `place-opt-${activeSuggest}` : undefined}
+                  autoComplete="off"
+                  className="w-[230px] pl-8 pr-7 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100 placeholder:text-ink-600 focus:outline-none focus:border-cy-400/50"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery("")}
+                    aria-label="Clear search"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-500 hover:text-ink-200"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+                {suggestOpen && suggestions.length > 1 && (
+                  <ul
+                    id="place-suggestions"
+                    role="listbox"
+                    aria-label="Place suggestions"
+                    data-testid="place-suggestions"
+                    className="absolute left-0 top-full z-[1100] mt-1 max-h-72 w-[min(340px,calc(100vw-2rem))] overflow-auto rounded-lg border border-line-800 bg-bg-900 py-1 shadow-[0_6px_24px_rgba(0,0,0,0.5)]"
+                  >
+                    {suggestions.map((s, i) => (
+                      <li key={`${s.kind}:${s.city}:${s.label}`} role="presentation">
+                        <button
+                          type="button"
+                          id={`place-opt-${i}`}
+                          role="option"
+                          aria-selected={i === activeSuggest}
+                          onMouseEnter={() => setActiveSuggest(i)}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => choosePlace(s)}
+                          className={`flex w-full items-baseline justify-between gap-3 px-3 py-2 text-left text-[13px] ${
+                            i === activeSuggest ? "bg-bg-800 text-ink-100" : "text-ink-200 hover:bg-bg-800"
+                          }`}
+                        >
+                          <span className="min-w-0 truncate">
+                            <span className="text-ink-100">{s.label}</span>
+                            <span className="text-ink-500">
+                              {" "}· {s.kind === "city" ? "city" : `neighborhood · ${s.city}`}
+                            </span>
+                          </span>
+                          <span className="shrink-0 tabular-nums text-ink-400">{s.n.toLocaleString()}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <select
+                value={city ?? "all"}
+                onChange={(e) => chooseCity(e.target.value === "all" ? null : e.target.value)}
+                aria-label="Filter by city"
+                className="px-3 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100"
+              >
                 <option value="all">All cities</option>
-                {cities.map((c) => <option key={c} value={c}>{c}</option>)}
+                {citiesByState.map(([state, list]) => (
+                  <optgroup key={state} label={state}>
+                    {list.map((c) => <option key={c.city} value={c.city}>{c.city} ({c.n.toLocaleString()})</option>)}
+                  </optgroup>
+                ))}
               </select>
-              <select value={venue} onChange={(e) => setVenue(e.target.value)} className="px-3 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100 capitalize">
+              <select
+                value={venue ?? "all"}
+                onChange={(e) => { setVenue(e.target.value === "all" ? null : e.target.value); setListPage(0); }}
+                aria-label="Filter by venue type"
+                className="px-3 py-2 rounded-lg bg-bg-900 border border-line-800 text-[13px] text-ink-100 capitalize"
+              >
                 <option value="all">All venues</option>
-                {venues.map((v) => <option key={v} value={v} className="capitalize">{v}</option>)}
+                {venueOpts.map((v) => <option key={v.venue_type} value={v.venue_type} className="capitalize">{v.venue_type} ({v.n.toLocaleString()})</option>)}
               </select>
+              {(city || venue) && (
+                <button
+                  type="button"
+                  onClick={() => { setCity(null); setVenue(null); setListPage(0); }}
+                  className="text-[12px] text-ink-400 hover:text-ink-100 underline underline-offset-2"
+                >
+                  Clear filters
+                </button>
+              )}
             </div>
             <div className="flex rounded-lg border border-line-800 overflow-hidden">
               <ToggleBtn active={view === "map"} onClick={() => setView("map")} icon={MapIcon} label="Map" />
-              <ToggleBtn active={view === "list"} onClick={() => setView("list")} icon={List} label="List" />
+              <ToggleBtn active={view === "list"} onClick={() => { setListPage(0); setView("list"); }} icon={List} label="List" />
             </div>
           </div>
 
           {loadErr && <p className="text-sm text-red-400 mb-3">{loadErr}</p>}
-          {!screens && !loadErr && (
+          {!loadErr && !showList && !showMap && (
             <div className="flex items-center gap-2 text-ink-400 text-sm py-10 justify-center"><Loader2 size={15} className="animate-spin" /> Loading screens…</div>
           )}
 
-          {screens && view === "map" && (
+          {awayFrom && !query && (
+            <p className="text-[12px] text-amber-400/90 mb-3">
+              No Glo screens near {awayFrom} yet. Showing {FALLBACK.label}. Search a ZIP, neighborhood or city to look elsewhere.
+            </p>
+          )}
+
+          {origin && totalNear !== null && !query && !city && (
+            <p className="text-[12px] text-ink-400 mb-3">
+              {totalNear.toLocaleString()} screens within {Math.round(RADIUS_M / 1000)}km of {origin.label}
+            </p>
+          )}
+
+          {noMatch && (
+            <p className="text-[12px] text-amber-400/90 mb-3">
+              Nothing found for &ldquo;{query.trim()}&rdquo;. Try a 5-digit ZIP, a neighborhood, or a city.
+            </p>
+          )}
+          {hit && query.trim() && (
+            <p className="text-[12px] text-ink-400 mb-3">
+              {hit.n.toLocaleString()} screen{hit.n === 1 ? "" : "s"}{" "}
+              {hit.kind === "zip" ? `near ${hit.label}` : `in ${hit.label}`}
+              {hit.n === 0 && " (no inventory there yet)"}
+            </p>
+          )}
+
+          {showMap && (
             <div>
-              <BookMap screens={filtered} selected={selected} onToggle={toggle} />
-              <p className="text-[11px] text-ink-500 mt-2">Tap a dot to select a screen. Selected screens glow cyan.</p>
+              <BookMap
+                filters={filters}
+                selected={selected}
+                onToggle={toggle}
+                onSelectMany={addMany}
+                onViewport={(v) => { setViewport(v); setArea(v.bbox); lastView.current = { center: v.center, zoom: v.zoom }; }}
+                focus={focus}
+                initial={lastView.current ?? { center: [origin.lat, origin.lng], zoom: LOCAL_ZOOM }}
+              />
+              {selected.size > 12 ? (
+                /* A bulk selection as chips buries the Next button. Summarise instead. */
+                <div className="flex items-center justify-between gap-3 mt-3 px-3 py-2.5 rounded-lg bg-bg-900 border border-cy-400/30">
+                  <span className="text-[13px] text-ink-100">
+                    {selected.size.toLocaleString()} screens selected
+                    <span className="text-ink-500"> · {fmtUsd(perDay)}/day</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(new Map())}
+                    className="text-[12px] text-ink-400 hover:text-ink-100 underline underline-offset-2 shrink-0"
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : (
               <div className="flex flex-wrap gap-2 mt-3">
-                {filtered.map((s) => {
+                {chipScreens.map((s) => {
                   const isSel = selected.has(s.id);
                   return (
                     <button
                       key={s.id}
                       type="button"
-                      onClick={() => toggle(s.id)}
+                      onClick={() => toggle(s)}
                       className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[12px] border transition-colors ${
                         isSel
                           ? "bg-cy-400/15 text-cy-300 border-cy-400/40"
@@ -229,47 +885,87 @@ export default function BookPage() {
                     >
                       <span className={`w-1.5 h-1.5 rounded-full ${isSel ? "bg-cy-300 shadow-[0_0_6px_rgba(34,211,238,0.9)]" : "bg-lime-400 shadow-[0_0_6px_rgba(163,230,53,0.8)]"}`} />
                       {s.name}
-                      <span className="text-ink-500 tabular-nums">${s.daily_price_usd}/d</span>
+                      {s.source === "demo" && <DemoBadge />}
+                      <span className="text-ink-500 tabular-nums">{fmtUsd(s.daily_price_usd)}/day</span>
                     </button>
                   );
                 })}
               </div>
+              )}
             </div>
           )}
 
-          {screens && view === "list" && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {filtered.map((s) => {
-                const isSel = selected.has(s.id);
-                return (
+          {showList && (
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <p className="text-[12px] text-ink-400" data-testid="list-caption">
+                  {list === null
+                    ? "Loading screens…"
+                    : list.total === 0
+                      ? "No screens in this area with these filters."
+                      : `Showing ${(listPage * LIST_PAGE + 1).toLocaleString()}–${Math.min((listPage + 1) * LIST_PAGE, list.total).toLocaleString()} of ${list.total.toLocaleString()} screens in the current map area, cheapest first`}
+                  {listLoading && list !== null && <Loader2 size={12} className="inline ml-2 animate-spin" />}
+                </p>
+                {selected.size > 0 && (
+                  <span className="text-[12px] text-cy-300">{selected.size.toLocaleString()} selected · {fmtUsd(perDay)}/day</span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {(list?.rows ?? []).map((s) => {
+                  const isSel = selected.has(s.id);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => toggle(s)}
+                      className={`text-left card-tight p-4 border transition-colors ${
+                        isSel ? "border-cy-400/60 bg-cy-400/5" : "border-line-800 hover:border-line-700"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Monitor size={14} className={isSel ? "text-cy-300" : "text-ink-400"} />
+                            <span className="text-[14px] font-medium text-ink-50 truncate">{s.name}</span>
+                            {s.source === "demo" && <DemoBadge />}
+                          </div>
+                          <div className="text-[12px] text-ink-400 mt-1 flex items-center gap-1.5 capitalize">
+                            <MapPin size={11} /> {s.city} · {s.venue_type} · max {s.max_duration_s}s
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="text-[15px] font-semibold text-ink-50 tabular-nums">{fmtUsd(s.daily_price_usd)}/day</div>
+                          <div className="text-[10px] text-ink-500">from {fmtUsd(lateNightFrom(s.daily_price_usd))} · late night</div>
+                        </div>
+                      </div>
+                      {isSel && <div className="mt-2 text-[11px] text-cy-300 flex items-center gap-1"><CheckCircle2 size={12} /> Selected</div>}
+                    </button>
+                  );
+                })}
+              </div>
+              {list && list.total > LIST_PAGE && (
+                <div className="flex items-center justify-center gap-3 py-4">
                   <button
-                    key={s.id}
                     type="button"
-                    onClick={() => toggle(s.id)}
-                    className={`text-left card-tight p-4 border transition-colors ${
-                      isSel ? "border-cy-400/60 bg-cy-400/5" : "border-line-800 hover:border-line-700"
-                    }`}
+                    disabled={listPage === 0 || listLoading}
+                    onClick={() => { setListPage((n) => Math.max(0, n - 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                    className="px-3 py-1.5 rounded-md text-[12px] font-medium border border-line-800 text-ink-300 hover:text-ink-50 disabled:opacity-40"
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <Monitor size={14} className={isSel ? "text-cy-300" : "text-ink-400"} />
-                          <span className="text-[14px] font-medium text-ink-50 truncate">{s.name}</span>
-                        </div>
-                        <div className="text-[12px] text-ink-400 mt-1 flex items-center gap-1.5 capitalize">
-                          <MapPin size={11} /> {s.city} · {s.venue_type} · max {s.max_duration_s}s
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <div className="text-[15px] font-semibold text-ink-50 tabular-nums">${s.daily_price_usd}</div>
-                        <div className="text-[10px] uppercase tracking-wider text-ink-500">/day</div>
-                      </div>
-                    </div>
-                    {isSel && <div className="mt-2 text-[11px] text-cy-300 flex items-center gap-1"><CheckCircle2 size={12} /> Selected</div>}
+                    ← Prev
                   </button>
-                );
-              })}
-              {filtered.length === 0 && <p className="text-sm text-ink-500 col-span-full py-8 text-center">No screens match those filters.</p>}
+                  <span className="text-[12px] text-ink-500 tabular-nums">
+                    Page {listPage + 1} of {Math.ceil(list.total / LIST_PAGE).toLocaleString()}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={(listPage + 1) * LIST_PAGE >= list.total || listLoading}
+                    onClick={() => { setListPage((n) => n + 1); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                    className="px-3 py-1.5 rounded-md text-[12px] font-medium border border-line-800 text-ink-300 hover:text-ink-50 disabled:opacity-40"
+                  >
+                    More →
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -280,18 +976,28 @@ export default function BookPage() {
         <div className="max-w-md">
           <div className="grid grid-cols-2 gap-4 mb-5">
             <div>
-              <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Start</label>
-              <input type="date" min={today} value={startDate}
-                onChange={(e) => { setStartDate(e.target.value); if (e.target.value > endDate) setEndDate(e.target.value); }}
+              <label htmlFor="flight-start" className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Start</label>
+              <input id="flight-start" type="date" min={today} value={startDate}
+                onChange={(e) => {
+                  setDatesShifted(false);
+                  setStartDate(e.target.value);
+                  if (e.target.value > endDate) setEndDate(e.target.value);
+                }}
                 className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none" />
+              {startInPast && (
+                <p className="text-[12px] text-red-400 mt-1.5">Start date can't be in the past.</p>
+              )}
             </div>
             <div>
-              <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">End</label>
-              <input type="date" min={startDate} value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+              <label htmlFor="flight-end" className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">End</label>
+              <input id="flight-end" type="date" min={startDate} value={endDate}
+                onChange={(e) => { setDatesShifted(false); setEndDate(e.target.value); }}
                 className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none" />
             </div>
           </div>
+          {datesShifted && (
+            <p className="text-[12px] text-ink-400 -mt-3 mb-5">Dates moved to today, past days can't be booked.</p>
+          )}
           <div className="mb-5">
             <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Timing</label>
             <div className="flex flex-wrap gap-2">
@@ -340,9 +1046,10 @@ export default function BookPage() {
       {step === 2 && (
         <div>
           <div className="flex flex-wrap gap-2 mb-5">
-            <ChoiceBtn active={creative.kind === "upload"} onClick={() => setCreative(creative.kind === "upload" ? creative : { kind: "none" })} icon={ImagePlus} label="Upload" asLabel htmlFor="creative-file" />
-            <ChoiceBtn active={creative.kind === "template"} onClick={() => setCreative({ kind: "template", spec: tplSpec })} icon={Wand2} label="Use a template" />
-            <ChoiceBtn active={creative.kind === "none"} onClick={() => setCreative({ kind: "none" })} icon={ChevronRight} label="Skip for now" />
+            <ChoiceBtn active={creative.kind === "upload"} onClick={() => { setShowLib(false); setCreative(creative.kind === "upload" ? creative : { kind: "none" }); }} icon={ImagePlus} label="Upload" asLabel htmlFor="creative-file" />
+            <ChoiceBtn active={creative.kind === "template"} onClick={() => { setShowLib(false); setCreative({ kind: "template", spec: tplSpec }); }} icon={Wand2} label="Use a template" />
+            <ChoiceBtn active={creative.kind === "library"} onClick={() => setShowLib(true)} icon={FolderOpen} label="From library" />
+            <ChoiceBtn active={creative.kind === "none"} onClick={() => { setShowLib(false); setCreative({ kind: "none" }); }} icon={ChevronRight} label="Skip for now" />
           </div>
           <input
             id="creative-file"
@@ -369,7 +1076,52 @@ export default function BookPage() {
           {creative.kind === "template" && (
             <TemplateBuilder spec={tplSpec} onChange={(s) => { setTplSpec(s); setCreative({ kind: "template", spec: s }); }} />
           )}
-          {creative.kind === "none" && (
+          {showLib && (
+            <div className="max-w-2xl">
+              {!libItems && <div className="flex items-center gap-2 text-ink-400 text-sm py-6"><Loader2 size={15} className="animate-spin" /> Loading your library…</div>}
+              {libItems && libItems.length === 0 && (
+                <p className="text-[13px] text-ink-500">Your library is empty. Upload a file here or design one in the <Link href="/studio" className="text-cy-300 hover:text-cy-200">Studio</Link>.</p>
+              )}
+              {libItems && libItems.filter((lc) => lc.review_status !== "rejected").length === 0 && libItems.length > 0 && (
+                <p className="text-[13px] text-ink-500">Rejected creatives cannot attach. Make a new one in the <Link href="/studio" className="text-cy-300 hover:text-cy-200">Studio</Link>.</p>
+              )}
+              {libItems && libItems.filter((lc) => lc.review_status !== "rejected").length > 0 && (
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
+                  {libItems.filter((lc) => lc.review_status !== "rejected").map((lc) => {
+                    const url = libUrls[lc.id];
+                    const isVid = lc.storage_path.endsWith(".mp4");
+                    const isSel = creative.kind === "library" && creative.creative.id === lc.id;
+                    return (
+                      <button
+                        key={lc.id}
+                        type="button"
+                        onClick={() => setCreative({ kind: "library", creative: lc })}
+                        className={`text-left rounded-lg overflow-hidden border transition-colors ${
+                          isSel ? "border-cy-400/70 shadow-glow-cy" : "border-line-800 hover:border-line-700"
+                        }`}
+                      >
+                        <div className="relative aspect-[9/16] bg-bg-900 flex items-center justify-center">
+                          {url ? (
+                            isVid
+                              ? <video src={url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                              : /* eslint-disable-next-line @next/next/no-img-element */
+                                <img src={url} alt={lc.name ?? "Creative"} className="w-full h-full object-cover" />
+                          ) : <Loader2 size={12} className="animate-spin text-ink-600" />}
+                          {isSel && (
+                            <div className="absolute inset-0 bg-cy-400/15 flex items-center justify-center">
+                              <CheckCircle2 size={20} className="text-cy-200" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="px-1.5 py-1 text-[10px] text-ink-300 truncate bg-bg-950/60">{lc.name ?? "Untitled"}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+          {creative.kind === "none" && !showLib && (
             <p className="text-[13px] text-ink-500 max-w-md">No creative yet is fine. You can attach one from the campaign page any time before go-live.</p>
           )}
         </div>
@@ -381,19 +1133,59 @@ export default function BookPage() {
           <div>
             <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Campaign name</label>
             <input type="text" maxLength={80} value={name} onChange={(e) => setName(e.target.value)}
-              placeholder={`${selectedScreens[0]?.city ?? "Glo"} campaign`}
+              placeholder={`${meta.get(selectedIds[0])?.city ?? city ?? "Glo"} campaign`}
               className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none placeholder-ink-500" />
           </div>
+          {reviewPreview && (
+            <div className="card-tight p-3">
+              <div className="text-xs uppercase tracking-wider text-ink-400 mb-2">Creative preview</div>
+              <div className="rounded-md overflow-hidden border border-line-800 bg-bg-900 flex items-center justify-center">
+                {reviewPreview.isVideo ? (
+                  <video src={reviewPreview.url} className="max-h-56 w-auto" controls muted playsInline autoPlay loop />
+                ) : (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img src={reviewPreview.url} alt="Creative preview" className="max-h-56 w-auto" />
+                )}
+              </div>
+            </div>
+          )}
           <div className="card-tight divide-y divide-line-900">
-            <Row label="Screens" value={`${selected.size} selected · ${fmtUsd(perDay)}/day`} />
+            <Row label="Screens" value={`${selected.size.toLocaleString()} selected · ${fmtUsd(perDay)}/day`} />
             <Row label="Flight" value={`${startDate} → ${endDate} · ${days} day${days === 1 ? "" : "s"}`} />
             <Row label="Timing" value={daypartSummary(dayparts)} />
-            <Row label="Creative" value={creative.kind === "none" ? "Attach later" : creative.kind === "upload" ? creative.file.name : `Template · ${tplSpec.preset}`} />
+            <Row label="Creative" value={creative.kind === "none" ? "Attach later" : creative.kind === "upload" ? creative.file.name : creative.kind === "library" ? (creative.creative.name ?? "From library") : `Template · ${tplSpec.preset}`} />
             <Row label="Total" value={fmtUsd(total)} strong />
           </div>
+          {reviewScreens.length > 0 && (
+            <div className="card-tight divide-y divide-line-900">
+              {reviewScreens.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <span className="min-w-0 flex items-center gap-2 text-[13px] text-ink-100">
+                    <span className="truncate">{s.name}</span>
+                    {s.source === "demo" && <DemoBadge />}
+                  </span>
+                  <span className="text-[12px] tabular-nums text-ink-400 shrink-0">{fmtUsd(s.daily_price_usd)}/day</span>
+                </div>
+              ))}
+              {selected.size > reviewScreens.length && (
+                <div className="px-4 py-2.5 text-[12px] text-ink-500">and {(selected.size - reviewScreens.length).toLocaleString()} more</div>
+              )}
+            </div>
+          )}
           <p className="text-[12px] text-ink-500">
-            Booking saves your campaign as reserved. Checkout opens in the next release; nothing is charged today.
+            Booking reserves your screens and dates. You complete payment from the campaign page; nothing is charged until checkout.
           </p>
+          {startInPast && (
+            <p className="rounded-lg border border-amber-400/30 bg-amber-400/5 px-4 py-3 text-[13px] text-amber-200">
+              {"Start date can't be in the past. "}
+              <button type="button" onClick={() => setStep(1)} className="underline underline-offset-2 font-medium">
+                Back to dates
+              </button>
+            </p>
+          )}
+          {demoCount > 0 && (
+            <p className="text-[12px] text-amber-200">{"Demo screens can't be booked yet. Remove them or save as draft."}</p>
+          )}
           {saveErr && <p className="text-sm text-red-400">{saveErr}</p>}
         </div>
       )}
@@ -407,11 +1199,13 @@ export default function BookPage() {
         <div className="flex items-center gap-3">
           {selected.size > 0 && (
             <span className="hidden sm:block text-[13px] text-ink-400 tabular-nums">
-              {selected.size} screen{selected.size === 1 ? "" : "s"}{days > 0 ? ` · ${fmtUsd(total)}` : ` · ${fmtUsd(perDay)}/day`}
+              {step === 0
+                ? `${selected.size.toLocaleString()} screen${selected.size === 1 ? "" : "s"} · ${fmtUsd(perDay)}/day`
+                : `${selected.size.toLocaleString()} screen${selected.size === 1 ? "" : "s"} · ${days} day${days === 1 ? "" : "s"} · ${fmtUsd(total)}`}
             </span>
           )}
-          {step >= 1 && step < 3 && (
-            <button type="button" disabled={saving !== "idle"} onClick={() => save("draft")} className="btn btn-ghost disabled:opacity-40">
+          {step >= 1 && (step < 3 || demoCount > 0) && (
+            <button type="button" disabled={saving !== "idle" || startInPast} onClick={() => save("draft")} className="btn btn-ghost disabled:opacity-40">
               {saving === "draft" ? <Loader2 size={15} className="animate-spin" /> : "Save draft"}
             </button>
           )}
@@ -420,7 +1214,7 @@ export default function BookPage() {
               Next <ChevronRight size={15} />
             </button>
           ) : (
-            <button type="button" disabled={saving !== "idle"} onClick={() => save("pending_payment")} className="btn btn-lime disabled:opacity-40">
+            <button type="button" disabled={saving !== "idle" || demoCount > 0 || startInPast} onClick={() => save("pending_payment")} className="btn btn-lime disabled:opacity-40">
               {saving === "book" ? <Loader2 size={15} className="animate-spin" /> : `Book · ${fmtUsd(total)}`}
             </button>
           )}
@@ -430,11 +1224,11 @@ export default function BookPage() {
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, demo = false }: { children: React.ReactNode; demo?: boolean }) {
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8 py-6 md:py-10">
       <div className="mb-6">
-        <p className="chip mb-3">Book · live inventory</p>
+        <p className="chip mb-3">{demo ? "Book · demo inventory" : "Book · live inventory"}</p>
         <h1 className="text-2xl md:text-3xl font-semibold text-ink-50 tracking-tight">Book screens</h1>
         <p className="text-ink-400 mt-1.5 text-sm">Pick screens, pick dates, attach a creative. Sixty seconds to the street.</p>
       </div>
@@ -447,7 +1241,7 @@ function ToggleBtn({ active, onClick, icon: Icon, label }: {
   active: boolean; onClick: () => void; icon: React.ComponentType<{ size?: number }>; label: string;
 }) {
   return (
-    <button type="button" onClick={onClick}
+    <button type="button" onClick={onClick} aria-pressed={active}
       className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-medium ${
         active ? "bg-cy-400/15 text-cy-300" : "text-ink-400 hover:text-ink-100"
       }`}>
