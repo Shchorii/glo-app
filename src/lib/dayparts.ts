@@ -11,6 +11,14 @@ export const DAYPARTS: Daypart[] = [
   { id: "late_night",   label: "Late night",   range: "10pm-12am", share: 0.15, note: "cheaper" },
 ];
 
+/** Cheapest bookable slot share (late night, 10pm–12am). */
+export const MIN_DAYPART_SHARE = Math.min(...DAYPARTS.map((d) => d.share));
+
+/** Cheapest single-slot price (late night), rounded up. Not a per-day price. */
+export function lateNightFrom(dailyUsd: number): number {
+  return Math.ceil(dailyUsd * MIN_DAYPART_SHARE);
+}
+
 export function daypartMultiplier(ids: string[]): number {
   if (!ids.length || ids.includes("all_day")) return 1;
   const sum = DAYPARTS.filter((d) => ids.includes(d.id)).reduce((a, d) => a + d.share, 0);

@@ -1,14 +1,21 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+
+const RESERVATION_WINDOW_MS = 5 * 60 * 1000;
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  getCampaign, cancelDraft, signedCreativeUrl, startCheckout, daysBetween, fmtUsd,
-  type CampaignDetail, type CampaignStatus,
+  getCampaign, cancelCampaign, deleteCampaign, signedCreativeUrl, startCheckout, daysBetween, fmtUsd,
+  listMyCreatives, attachCampaignCreative, type Creative, type CampaignDetail, type CampaignStatus,
 } from "@/lib/db";
-import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock } from "lucide-react";
+import { creativeAttachError, isPaidLiveStatus } from "@/lib/moderation";
+import { ArrowLeft, MapPin, Calendar, Monitor, Loader2, ImageIcon, XCircle, CreditCard, CheckCircle2, Clock, Trash2, Timer, RefreshCw } from "lucide-react";
 import { daypartSummary } from "@/lib/dayparts";
+import { funnel } from "@/lib/funnel";
+import { PROMO, promoCredit } from "@/lib/promo";
+import { useSession } from "@/lib/auth-client";
+import { DemoBadge } from "@/components/DemoBadge";
 
 const STATUS_META: Record<CampaignStatus, { label: string; cls: string }> = {
   draft:           { label: "Draft",            cls: "bg-bg-700/60 text-ink-200 border-line-700" },
@@ -26,11 +33,24 @@ function CampaignView() {
   const router = useRouter();
   const id = params.get("id");
   const justPaid = params.get("paid") === "1";
+  const { user: me } = useSession();
   const [c, setC] = useState<CampaignDetail | null | "loading">("loading");
   const [paying, setPaying] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!c || c === "loading") return;
+    const what = `${c.id} · ${c.total_usd}`;
+    if (justPaid || ["pending_review", "scheduled", "live", "completed"].includes(c.status)) funnel("paid", what, `forever:paid_${c.id}`);
+    if (c.status === "scheduled" || c.status === "live") funnel("campaign_live", what, `forever:live_${c.id}`);
+    if (c.status === "completed") funnel("campaign_completed", what, `forever:done_${c.id}`);
+  }, [c, justPaid]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [showReplace, setShowReplace] = useState(false);
+  const [alts, setAlts] = useState<Creative[] | null>(null);
+  const [altThumbs, setAltThumbs] = useState<Record<string, string>>({});
+  const [swapping, setSwapping] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) { setC(null); return; }
@@ -50,6 +70,28 @@ function CampaignView() {
     }
   }, [id, justPaid]);
 
+  // 5-minute reservation countdown
+  useEffect(() => {
+    if (c === "loading" || !c || c.status !== "pending_payment" || !c.reserved_at || justPaid) {
+      setSecondsLeft(null);
+      return;
+    }
+    const deadline = Date.parse(c.reserved_at) + RESERVATION_WINDOW_MS;
+    const tick = () => setSecondsLeft(Math.max(0, Math.round((deadline - Date.now()) / 1000)));
+    tick();
+    const t = window.setInterval(tick, 1000);
+    return () => window.clearInterval(t);
+  }, [c, justPaid]);
+
+  // Once expired, poll until the slot is released server-side
+  useEffect(() => {
+    if (secondsLeft !== 0 || !id) return;
+    const t = window.setInterval(() => {
+      getCampaign(id).then((res) => res && setC(res)).catch(() => {});
+    }, 8000);
+    return () => window.clearInterval(t);
+  }, [secondsLeft, id]);
+
   if (c === "loading") {
     return <div className="flex items-center gap-2 text-ink-400 text-sm py-12 justify-center"><Loader2 size={15} className="animate-spin" /> Loading campaign…</div>;
   }
@@ -66,11 +108,27 @@ function CampaignView() {
   const meta = STATUS_META[c.status];
   const isVideo = c.creative?.storage_path.endsWith(".mp4");
 
+  const canCancel = c.status === "draft" || c.status === "pending_payment";
+  const canDelete = canCancel || c.status === "cancelled";
+
   async function onCancel() {
-    if (!c || c === "loading" || c.status !== "draft") return;
+    if (!c || c === "loading") return;
     setBusy(true); setErr(null);
     try {
-      await cancelDraft(c.id);
+      await cancelCampaign(c.id);
+      router.push("/campaigns");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  async function onDelete() {
+    if (!c || c === "loading") return;
+    if (!window.confirm("Delete this campaign permanently? This cannot be undone.")) return;
+    setBusy(true); setErr(null);
+    try {
+      await deleteCampaign(c.id);
       router.push("/campaigns");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -82,6 +140,7 @@ function CampaignView() {
     if (!c || c === "loading") return;
     setPaying(true); setErr(null);
     try {
+      funnel("checkout_click", `${c.id} · ${c.total_usd}`, `session:pay_${c.id}`);
       const url = await startCheckout(c.id);
       window.location.href = url;
     } catch (e) {
@@ -89,6 +148,54 @@ function CampaignView() {
       setPaying(false);
     }
   }
+
+  async function openReplace() {
+    if (!c || c === "loading") return;
+    const current = c;
+    setShowReplace(true);
+    if (alts) return;
+    try {
+      const mine = await listMyCreatives();
+      const paid = isPaidLiveStatus(current.status);
+      const options = mine.filter((cr) => {
+        if (cr.id === current.creative?.id) return false;
+        if (cr.review_status === "rejected") return false;
+        if (paid) return cr.review_status === "approved";
+        return true;
+      });
+      setAlts(options);
+      options.slice(0, 12).forEach(async (cr) => {
+        const u = await signedCreativeUrl(cr.storage_path);
+        if (u) setAltThumbs((prev) => ({ ...prev, [cr.id]: u }));
+      });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function swapCreative(creativeId: string) {
+    if (!c || c === "loading") return;
+    setSwapping(creativeId); setErr(null);
+    try {
+      const chosen = alts?.find((cr) => cr.id === creativeId);
+      if (!chosen) throw new Error("Creative not found.");
+      await attachCampaignCreative(c.id, chosen, c.status);
+      const fresh = await getCampaign(c.id);
+      if (fresh) {
+        setC(fresh);
+        if (fresh.creative?.storage_path) signedCreativeUrl(fresh.creative.storage_path).then(setImgUrl);
+      }
+      setShowReplace(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSwapping(null);
+    }
+  }
+
+  const rejected = c.creative?.review_status === "rejected";
+  const payBlocked = c.creative ? creativeAttachError(c.creative, "pending_review") : null;
+  const demoCount = c.screens.filter((s) => s.source === "demo").length;
 
   return (
     <div>
@@ -110,8 +217,21 @@ function CampaignView() {
             </div>
           </div>
           <div className="text-right shrink-0">
-            <div className="text-2xl font-semibold text-ink-50 tabular-nums">{fmtUsd(c.total_usd)}</div>
-            <div className="text-[11px] text-ink-500">{c.status === "pending_payment" ? "due at checkout" : "total"}</div>
+            {(() => {
+              const credit = c.status === "pending_payment" && me?.user_metadata?.promo === PROMO ? promoCredit(c.total_usd) : 0;
+              return credit > 0 ? (
+                <>
+                  <div className="text-[13px] text-ink-500 line-through tabular-nums">{fmtUsd(c.total_usd)}</div>
+                  <div className="text-2xl font-semibold text-ink-50 tabular-nums">{fmtUsd(c.total_usd - credit)}</div>
+                  <div className="text-[11px] text-lime-300">Includes {fmtUsd(credit)} Glo credit · due at checkout</div>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-semibold text-ink-50 tabular-nums">{fmtUsd(c.total_usd)}</div>
+                  <div className="text-[11px] text-ink-500">{c.status === "pending_payment" ? "due at checkout" : "total"}</div>
+                </>
+              );
+            })()}
           </div>
         </div>
 
@@ -120,17 +240,49 @@ function CampaignView() {
             <CheckCircle2 size={15} className="shrink-0" /> Payment received. Your campaign is moving to review; this page will update in a moment.
           </div>
         )}
-        {c.status === "pending_payment" && !justPaid && (
+        {c.status === "pending_payment" && !justPaid && secondsLeft !== 0 && (
           <div className="rounded-lg border border-cy-400/30 bg-cy-400/5 px-4 py-3 mb-5 flex flex-wrap items-center justify-between gap-3">
-            <span className="text-[13px] text-cy-200">Reserved. Your screens and dates are held; complete payment to send it to review.</span>
-            <button type="button" disabled={paying} onClick={onPay} className="btn btn-lime disabled:opacity-40">
+            <span className="text-[13px] text-cy-200">
+              Reserved. Your screens are held for
+              {" "}
+              <span className={`font-semibold tabular-nums ${secondsLeft !== null && secondsLeft <= 60 ? "text-red-300" : "text-lime-300"}`}>
+                {secondsLeft !== null ? fmtClock(secondsLeft) : "05:00"}
+              </span>
+              . Complete payment before the slot is released.
+            </span>
+            <button type="button" disabled={paying || Boolean(payBlocked) || demoCount > 0} onClick={onPay} className="btn btn-lime disabled:opacity-40">
               {paying ? <Loader2 size={15} className="animate-spin" /> : <><CreditCard size={15} /> Complete payment · {fmtUsd(c.total_usd)}</>}
             </button>
+            {demoCount > 0 && (
+              <p className="w-full text-[12px] text-amber-200">{"Demo screens can't be booked yet. Remove them or save as draft."}</p>
+            )}
+            {payBlocked && (
+              <p className="w-full text-[12px] text-amber-200">{payBlocked} Swap in an approved creative to check out.</p>
+            )}
           </div>
         )}
-        {c.status === "pending_review" && (
+        {c.status === "pending_payment" && !justPaid && secondsLeft === 0 && (
+          <div className="rounded-lg border border-red-400/30 bg-red-400/5 px-4 py-3 text-[13px] text-red-200 mb-5 flex items-center gap-2">
+            <Timer size={15} className="shrink-0" /> Reservation expired. The slot was released; book again to grab it back.
+          </div>
+        )}
+        {c.status === "pending_review" && !rejected && (
           <div className="rounded-lg border border-amber-400/30 bg-amber-400/5 px-4 py-3 text-[13px] text-amber-200 mb-5">
             Paid and in review. We check every creative before it hits the street; you will get the go-live signal soon.
+          </div>
+        )}
+        {rejected && (
+          <div className="rounded-lg border border-red-400/30 bg-red-400/5 px-4 py-3 mb-5">
+            <p className="text-[13px] text-red-200">
+              Your creative was not approved{c.creative?.rejection_reason ? `: ${c.creative.rejection_reason}` : "."}
+              {" "}Swap it and your campaign goes straight back into review; your screens and dates stay booked.
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              <button type="button" onClick={openReplace} className="btn btn-lime text-[13px]">
+                <RefreshCw size={14} /> Replace creative
+              </button>
+              <Link href="/studio" className="btn btn-ghost text-[13px]">Make a new one in Studio</Link>
+            </div>
           </div>
         )}
 
@@ -153,10 +305,53 @@ function CampaignView() {
                 <div className="text-ink-100 capitalize">{c.creative.source}</div>
                 <div className="mt-0.5 capitalize">Review: {c.creative.review_status}</div>
                 {c.creative.rejection_reason && <div className="mt-0.5 text-red-400">{c.creative.rejection_reason}</div>}
+                {c.status === "pending_payment" && payBlocked && !rejected && (
+                  <button type="button" onClick={openReplace} className="btn btn-ghost text-[12px] mt-2">
+                    <RefreshCw size={13} /> Replace creative
+                  </button>
+                )}
               </div>
             </div>
           ) : (
             <p className="text-[13px] text-ink-500">No creative attached yet.</p>
+          )}
+          {showReplace && (
+            <div className="mt-3">
+              {alts === null ? (
+                <p className="text-[12px] text-ink-500 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Loading your library</p>
+              ) : alts.length === 0 ? (
+                <p className="text-[12px] text-ink-500">
+                  {isPaidLiveStatus(c.status)
+                    ? "Only approved creatives can attach to a paid campaign. Make a new one in Studio and wait for approval."
+                    : "No other creatives in your library yet; make one in Studio and come back."}
+                </p>
+              ) : (
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                  {alts.slice(0, 12).map((cr) => (
+                    <button
+                      key={cr.id}
+                      type="button"
+                      disabled={swapping !== null}
+                      onClick={() => swapCreative(cr.id)}
+                      className="relative aspect-[9/16] rounded-md overflow-hidden border border-line-800 hover:border-cy-400/60 bg-bg-900 disabled:opacity-50"
+                      title={cr.name ?? cr.source}
+                    >
+                      {altThumbs[cr.id] ? (
+                        cr.storage_path.endsWith(".mp4")
+                          ? <video src={altThumbs[cr.id]} className="w-full h-full object-cover" muted playsInline />
+                          : /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={altThumbs[cr.id]} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="absolute inset-0 flex items-center justify-center"><ImageIcon size={14} className="text-ink-600" /></span>
+                      )}
+                      {swapping === cr.id && (
+                        <span className="absolute inset-0 bg-bg-950/70 flex items-center justify-center"><Loader2 size={14} className="animate-spin text-cy-300" /></span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -167,27 +362,46 @@ function CampaignView() {
             {c.screens.map((s) => (
               <div key={s.id} className="flex items-center justify-between py-2.5">
                 <div className="min-w-0">
-                  <div className="text-[14px] text-ink-100 truncate">{s.name}</div>
+                  <div className="text-[14px] text-ink-100 truncate flex items-center gap-2">
+                    <span className="truncate">{s.name}</span>
+                    {s.source === "demo" && <DemoBadge />}
+                  </div>
                   <div className="text-[11px] text-ink-500 capitalize flex items-center gap-1"><MapPin size={11} /> {s.city} · {s.venue_type}</div>
                 </div>
                 <div className="text-[13px] tabular-nums text-ink-200 shrink-0 ml-3">${s.daily_price_usd}/day</div>
               </div>
             ))}
+            {c.screens.length === 0 && (
+              <p className="text-[13px] text-ink-500 py-2.5">No screens attached. This can happen with older bookings; cancel and rebook to fix it.</p>
+            )}
           </div>
         </div>
 
         {err && <p className="text-sm text-red-400 mt-4">{err}</p>}
 
-        {c.status === "draft" && (
-          <div className="mt-6 pt-4 border-t border-line-900 flex justify-end">
-            <button type="button" disabled={busy} onClick={onCancel} className="btn btn-ghost text-red-300 hover:text-red-200 disabled:opacity-40">
-              {busy ? <Loader2 size={15} className="animate-spin" /> : <><XCircle size={15} /> Cancel draft</>}
-            </button>
+        {(canCancel || canDelete) && (
+          <div className="mt-6 pt-4 border-t border-line-900 flex justify-end gap-2">
+            {canCancel && (
+              <button type="button" disabled={busy} onClick={onCancel} className="btn btn-ghost disabled:opacity-40">
+                {busy ? <Loader2 size={15} className="animate-spin" /> : <><XCircle size={15} /> {c.status === "draft" ? "Cancel draft" : "Cancel reservation"}</>}
+              </button>
+            )}
+            {canDelete && (
+              <button type="button" disabled={busy} onClick={onDelete} className="btn btn-ghost text-red-300 hover:text-red-200 disabled:opacity-40">
+                {busy ? <Loader2 size={15} className="animate-spin" /> : <><Trash2 size={15} /> Delete</>}
+              </button>
+            )}
           </div>
         )}
       </div>
     </div>
   );
+}
+
+function fmtClock(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60).toString().padStart(2, "0");
+  const s = (totalSeconds % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
 }
 
 export default function CampaignViewPage() {

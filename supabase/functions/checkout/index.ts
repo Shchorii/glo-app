@@ -10,6 +10,7 @@ const CORS = {
 };
 
 const APP_BASE = "https://app.we-are-glo.com";
+const BRAND_ICON = "https://kewuinclruxhretzvggy.supabase.co/storage/v1/object/public/brand/glo-icon-512.png";
 let cachedStripeKey: string | null = null;
 
 async function getSecret(name: string): Promise<string | null> {
@@ -49,6 +50,14 @@ function daysBetween(start: string, end: string): number {
   return Math.round((e - s) / 86400000) + 1;
 }
 
+// UTC today minus one day. A same-day booking in a timezone behind UTC is
+// already "tomorrow" in UTC by evening; rejecting that would block a flight
+// the advertiser correctly started today. The /book UI is stricter (local today).
+function earliestBookableStart(now = new Date()): string {
+  const utcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return new Date(utcMidnight - 86_400_000).toISOString().slice(0, 10);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   const json = (body: unknown, status = 200) =>
@@ -74,7 +83,7 @@ Deno.serve(async (req) => {
     const admin = createClient(url, service);
     const { data: c, error: cErr } = await admin
       .from("campaigns")
-      .select("id, user_id, name, start_date, end_date, status, dayparts, campaign_screens(screens(daily_price_usd))")
+      .select("id, user_id, name, start_date, end_date, status, dayparts, creative_id, creatives(review_status, rejection_reason), campaign_screens(screens(daily_price_usd, source))")
       .eq("id", campaign_id)
       .maybeSingle();
     if (cErr) throw cErr;
@@ -83,7 +92,33 @@ Deno.serve(async (req) => {
       return json({ error: `Campaign is ${c.status}; nothing to pay.` }, 409);
     }
 
-    const prices = ((c.campaign_screens as { screens: { daily_price_usd: string | number } }[]) ?? [])
+    const startDay = String(c.start_date).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(startDay) && startDay < earliestBookableStart()) {
+      return json({ error: "This campaign's start date is in the past. Pick new dates." }, 409);
+    }
+
+    const attached = c.creatives as { review_status?: string; rejection_reason?: string | null } | { review_status?: string; rejection_reason?: string | null }[] | null;
+    const creative = Array.isArray(attached) ? attached[0] : attached;
+    if (creative) {
+      if (creative.review_status === "rejected") {
+        const reason = (creative.rejection_reason ?? "").trim() || "Does not meet content guidelines";
+        return json({ error: `This creative was rejected: ${reason}` }, 409);
+      }
+      if (creative.review_status !== "approved") {
+        return json({ error: "This creative is still in review. You can pay once it's approved." }, 409);
+      }
+    }
+
+    const lines = (c.campaign_screens as { screens: { daily_price_usd: string | number; source?: string | null } | null }[]) ?? [];
+    const demoCount = lines.filter((cs) => cs.screens?.source === "demo").length;
+    if (demoCount > 0) {
+      return json(
+        { error: `This campaign includes ${demoCount} demo screen(s). Demo inventory can't be booked or paid.` },
+        409,
+      );
+    }
+
+    const prices = lines
       .map((cs) => Number(cs.screens?.daily_price_usd ?? 0))
       .filter((n) => n > 0);
     const days = daysBetween(c.start_date, c.end_date);
@@ -96,6 +131,23 @@ Deno.serve(async (req) => {
 
     const stripe = new Stripe(stripeKey, { httpClient: Stripe.createFetchHttpClient() });
 
+    // Launch offer (we-are-glo.com/offer, ?promo=10on100 stored on the account): $10 per full $100.
+    // KEEP IN SYNC with src/lib/promo.ts
+    const credit = user.user_metadata?.promo === "10on100" ? Math.floor(total / 100) * 10 : 0;
+    const charged = Math.round((total - credit) * 100) / 100;
+    let discounts: { coupon: string }[] | undefined;
+    if (credit > 0) {
+      const coupon = await stripe.coupons.create({
+        amount_off: Math.round(credit * 100),
+        currency: "usd",
+        duration: "once",
+        max_redemptions: 1,
+        name: `Glo credit ($10 per $100)`,
+        metadata: { campaign_id: c.id, user_id: user.id, promo: "10on100" },
+      });
+      discounts = [{ coupon: coupon.id }];
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       line_items: [
@@ -105,25 +157,29 @@ Deno.serve(async (req) => {
             product_data: {
               name: `Glo campaign: ${c.name}`,
               description: `${prices.length} screen${prices.length === 1 ? "" : "s"} x ${days} day${days === 1 ? "" : "s"} (${c.start_date} to ${c.end_date}), ${daypartLabel(c.dayparts as string[] | null)}`,
+              images: [BRAND_ICON],
             },
             unit_amount: Math.round(total * 100),
           },
           quantity: 1,
         },
       ],
+      discounts,
       success_url: `${APP_BASE}/campaigns/view/?id=${c.id}&paid=1`,
       cancel_url: `${APP_BASE}/campaigns/view/?id=${c.id}`,
       customer_email: user.email ?? undefined,
-      metadata: { campaign_id: c.id, user_id: user.id },
+      metadata: { campaign_id: c.id, user_id: user.id, glo_credit_usd: String(credit) },
     });
 
-    // Keep the stored total honest and record the payment attempt
-    await admin.from("campaigns").update({ total_usd: total, status: "pending_payment" }).eq("id", c.id);
+    // Keep the stored total honest and record the payment attempt.
+    // The demo guard rejects this update; surface that instead of ignoring it.
+    const { error: upErr } = await admin.from("campaigns").update({ total_usd: total, status: "pending_payment" }).eq("id", c.id);
+    if (upErr) return json({ error: upErr.message }, 409);
     const { error: pErr } = await admin.from("payments").insert({
       campaign_id: c.id,
       user_id: user.id,
       stripe_session_id: session.id,
-      amount_usd: total,
+      amount_usd: charged,
       currency: "usd",
       status: "created",
     });

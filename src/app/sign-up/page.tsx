@@ -1,13 +1,18 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
 import { GloMark } from "@/components/Logo";
 import { Loader2 } from "lucide-react";
+import { SocialAuth } from "@/components/SocialAuth";
+import { PROMO } from "@/lib/promo";
 
-export default function SignUpPage() {
+function SignUpForm() {
   const router = useRouter();
+  const params = useSearchParams();
+  const nextUrl = params.get("next") || "/studio";
+  const promo = params.get("promo") === PROMO ? PROMO : "";
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -19,10 +24,10 @@ export default function SignUpPage() {
     setLoading(true); setError(null);
     const sb = getSupabase();
     if (!sb) { setLoading(false); setError("Sign-up is not configured in this build."); return; }
-    const { error } = await sb.auth.signUp({ email, password, options: { data: { full_name: name } } });
+    const { error } = await sb.auth.signUp({ email, password, options: { data: promo ? { full_name: name, promo, promo_at: new Date().toISOString() } : { full_name: name } } });
     setLoading(false);
     if (error) { setError(error.message || "Could not create account"); return; }
-    router.push("/studio");
+    router.push(`/onboarding?next=${encodeURIComponent(nextUrl)}`);
   }
 
   return (
@@ -32,12 +37,13 @@ export default function SignUpPage() {
         <div className="card p-7">
           <h1 className="text-xl font-semibold text-ink-50 mb-1">Create account</h1>
           <p className="text-sm text-ink-400 mb-6">Light up your first neighborhood.</p>
+          <SocialAuth next={nextUrl} mode="up" />
           <form onSubmit={onSubmit} className="space-y-4">
             <div>
               <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Name</label>
               <input type="text" required value={name} onChange={(e) => setName(e.target.value)}
                 className="w-full px-3 py-2.5 rounded-lg bg-bg-900 border border-line-800 text-ink-50 focus:border-cy-400 focus:outline-none focus:ring-2 focus:ring-cy-400/20"
-                placeholder="Idan" />
+                placeholder="Your name" />
             </div>
             <div>
               <label className="block text-xs uppercase tracking-wider text-ink-400 mb-1.5">Email</label>
@@ -57,10 +63,18 @@ export default function SignUpPage() {
             </button>
           </form>
           <p className="text-sm text-ink-400 mt-5 text-center">
-            Already have one? <Link href="/sign-in" className="text-cy-300 hover:text-cy-200">Sign in</Link>
+            Already have one? <Link href={`/sign-in${nextUrl === "/studio" ? "" : `?next=${encodeURIComponent(nextUrl)}`}`} className="text-cy-300 hover:text-cy-200">Sign in</Link>
           </p>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-sm text-ink-400">Loading...</div>}>
+      <SignUpForm />
+    </Suspense>
   );
 }

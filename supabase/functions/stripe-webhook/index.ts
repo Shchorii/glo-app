@@ -1,5 +1,6 @@
 // Supabase Edge Function: Stripe webhook. Flips campaigns to pending_review on paid sessions.
 // verify_jwt OFF; authenticity comes from the Stripe signature.
+// Payment always wins: a reservation auto-expired by the 5-minute cron is revived if the card went through.
 import Stripe from "npm:stripe@17.7.0";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import postgres from "npm:postgres@3.4.5";
@@ -56,7 +57,7 @@ Deno.serve(async (req) => {
           .from("campaigns")
           .update({ status: "pending_review", paid_at: new Date().toISOString() })
           .eq("id", campaignId)
-          .eq("status", "pending_payment");
+          .in("status", ["pending_payment", "cancelled"]);
       }
     } else if (event.type === "checkout.session.expired") {
       const session = event.data.object as Stripe.Checkout.Session;

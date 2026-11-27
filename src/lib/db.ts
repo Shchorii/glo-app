@@ -1,6 +1,7 @@
 "use client";
 import { getSupabase } from "@/lib/supabase";
 import { CHECKOUT_ENDPOINT } from "@/lib/endpoints";
+import { creativeAttachError, pingModerationIngest } from "@/lib/moderation";
 
 export type Screen = {
   id: string;
@@ -15,6 +16,10 @@ export type Screen = {
   height_px: number;
   max_duration_s: number;
   is_available: boolean;
+  /** Added with the national inventory; older rows may not have these. */
+  neighborhood?: string | null;
+  dma?: string | null;
+  source?: "demo" | "live";
 };
 
 export type CampaignStatus =
@@ -31,6 +36,7 @@ export type Campaign = {
   total_usd: number;
   status: CampaignStatus;
   dayparts: string[];
+  reserved_at: string | null;
   created_at: string;
   screen_count?: number;
 };
@@ -40,22 +46,60 @@ export type CampaignDetail = Campaign & {
   creative: Creative | null;
 };
 
+export type CreativeSource = "upload" | "template" | "ai" | "embed";
+
 export type Creative = {
   id: string;
   user_id: string;
+  name: string | null;
   storage_path: string;
-  source: "upload" | "template";
+  source: CreativeSource;
   width_px: number | null;
   height_px: number | null;
   duration_s: number | null;
   review_status: "pending" | "approved" | "rejected";
   rejection_reason: string | null;
+  created_at: string;
+  source_url?: string | null;
+  provider?: string | null;
+  model?: string | null;
 };
 
 function sb() {
   const c = getSupabase();
   if (!c) throw new Error("Supabase is not configured in this build.");
   return c;
+}
+
+/**
+ * Local-first fetch: screens within reach of a point, nearest first.
+ * Glo sells local advertising, so we never load national inventory into the browser.
+ */
+export async function listScreensNear(
+  lat: number,
+  lng: number,
+  radiusM = 25000,
+  limit = 3000
+): Promise<Screen[]> {
+  const { data, error } = await sb().rpc("screens_near", {
+    p_lat: lat,
+    p_lng: lng,
+    p_radius_m: radiusM,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return (data ?? []).map((s: Screen) => ({ ...s, daily_price_usd: Number(s.daily_price_usd) })) as Screen[];
+}
+
+/** True count in a radius. PostgREST caps fetched rows at 1000, so the count must come separately. */
+export async function countScreensNear(lat: number, lng: number, radiusM = 5000): Promise<number> {
+  const { data, error } = await sb().rpc("screens_near_count", {
+    p_lat: lat,
+    p_lng: lng,
+    p_radius_m: radiusM,
+  });
+  if (error) throw error;
+  return Number(data ?? 0);
 }
 
 export async function listScreens(): Promise<Screen[]> {
@@ -119,6 +163,23 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
   const uid = auth.user?.id;
   if (!uid) throw new Error("Sign in to book screens.");
 
+  if (input.creative_id) {
+    const { data: cr, error: crErr } = await client
+      .from("creatives")
+      .select("review_status, rejection_reason")
+      .eq("id", input.creative_id)
+      .maybeSingle();
+    if (crErr) throw crErr;
+    if (!cr) throw new Error("Creative not found.");
+    const blocked = creativeAttachError(
+      cr as { review_status: Creative["review_status"]; rejection_reason: string | null },
+      input.status,
+    );
+    if (blocked) throw new Error(blocked);
+  }
+
+  // RLS only allows attaching screens while a campaign is a draft, so we
+  // always insert as draft, link the screens, then flip to the requested status.
   const { data, error } = await client
     .from("campaigns")
     .insert({
@@ -129,7 +190,7 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
       creative_id: input.creative_id,
       total_usd: input.total_usd,
       dayparts: input.dayparts.length ? input.dayparts : ["all_day"],
-      status: input.status,
+      status: "draft",
     })
     .select("id")
     .single();
@@ -139,18 +200,39 @@ export async function createCampaign(input: NewCampaign): Promise<string> {
   const links = input.screen_ids.map((screen_id) => ({ campaign_id: campaignId, screen_id }));
   const { error: linkErr } = await client.from("campaign_screens").insert(links);
   if (linkErr) throw linkErr;
+
+  if (input.status !== "draft") {
+    const { error: upErr } = await client.from("campaigns").update({ status: input.status }).eq("id", campaignId);
+    if (upErr) throw upErr;
+  }
   return campaignId;
 }
 
-/** Cancel is an owner-side status update; RLS permits updates only while draft. */
-export async function cancelDraft(id: string): Promise<void> {
+/** Cancel any unpaid campaign (draft or reserved); RLS blocks it once paid. */
+export async function cancelCampaign(id: string): Promise<void> {
   const { error } = await sb().from("campaigns").update({ status: "cancelled" }).eq("id", id);
+  if (error) throw error;
+}
+
+/** Permanently delete a draft, unpaid reservation, or cancelled campaign. */
+export async function deleteCampaign(id: string): Promise<void> {
+  const { error } = await sb().from("campaigns").delete().eq("id", id);
   if (error) throw error;
 }
 
 export async function uploadCreative(
   blob: Blob,
-  opts: { source: "upload" | "template"; ext: string; width?: number; height?: number; duration?: number }
+  opts: {
+    source: CreativeSource;
+    ext: string;
+    name?: string;
+    width?: number;
+    height?: number;
+    duration?: number;
+    source_url?: string;
+    provider?: string;
+    model?: string;
+  }
 ): Promise<Creative> {
   const client = sb();
   const { data: auth } = await client.auth.getUser();
@@ -170,14 +252,119 @@ export async function uploadCreative(
       user_id: uid,
       storage_path: path,
       source: opts.source,
+      name: opts.name ?? null,
       width_px: opts.width ?? null,
       height_px: opts.height ?? null,
       duration_s: opts.duration ?? null,
+      source_url: opts.source_url ?? null,
+      provider: opts.provider ?? null,
+      model: opts.model ?? null,
     })
     .select("*")
     .single();
   if (error) throw error;
+  pingModerationIngest(data.id as string, blob.type || undefined);
   return data as Creative;
+}
+
+export type CreativeRendition = {
+  id: string;
+  creative_id: string;
+  ratio: string;
+  storage_path: string;
+  width_px: number;
+  height_px: number;
+  created_at: string;
+};
+
+/**
+ * Attach extra aspect-ratio renders to a creative that already exists.
+ *
+ * IDA-28. The parent creative stays the 9:16 render and the single source of
+ * truth for moderation and campaign attachment; these are additional files
+ * for screens whose shape differs (80% of inventory is landscape).
+ *
+ * BEST EFFORT ON PURPOSE. A booking must never fail because a secondary
+ * render did not upload, so every error here is swallowed and reported in the
+ * return value rather than thrown. The caller already holds a usable creative
+ * by the time this runs. Returns the ratios that landed.
+ */
+export async function addCreativeRenditions(
+  creativeId: string,
+  renders: { ratio: string; blob: Blob; width: number; height: number }[],
+): Promise<{ saved: string[]; failed: string[] }> {
+  const saved: string[] = [];
+  const failed: string[] = [];
+  const client = sb();
+  const { data: auth } = await client.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) return { saved, failed: renders.map((r) => r.ratio) };
+
+  for (const r of renders) {
+    try {
+      const path = `${uid}/${crypto.randomUUID()}.png`;
+      const { error: upErr } = await client.storage
+        .from("creatives")
+        .upload(path, r.blob, { contentType: r.blob.type || "image/png", upsert: false });
+      if (upErr) throw upErr;
+
+      const { error } = await client.from("creative_renditions").insert({
+        creative_id: creativeId,
+        ratio: r.ratio,
+        storage_path: path,
+        width_px: r.width,
+        height_px: r.height,
+      });
+      if (error) throw error;
+      saved.push(r.ratio);
+    } catch {
+      failed.push(r.ratio);
+    }
+  }
+  return { saved, failed };
+}
+
+/** Renditions of a creative, for previewing what each screen shape will show. */
+export async function listCreativeRenditions(creativeId: string): Promise<CreativeRendition[]> {
+  const { data, error } = await sb()
+    .from("creative_renditions")
+    .select("*")
+    .eq("creative_id", creativeId)
+    .order("ratio");
+  if (error) throw error;
+  return (data ?? []) as CreativeRendition[];
+}
+
+/** Attach a creative to a campaign. Paid/live require approved; rejected is always blocked. */
+export async function attachCampaignCreative(campaignId: string, creative: Creative, campaignStatus: CampaignStatus): Promise<void> {
+  const blocked = creativeAttachError(creative, campaignStatus);
+  if (blocked) throw new Error(blocked);
+  const { error } = await sb().rpc("attach_campaign_creative", { cid: campaignId, crid: creative.id });
+  if (error) throw error;
+}
+
+/** All of the signed-in user's creatives, newest first. */
+export async function listMyCreatives(): Promise<Creative[]> {
+  const { data, error } = await sb()
+    .from("creatives")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as Creative[];
+}
+
+/**
+ * Delete a creative and its file. Fails with a friendly error when the
+ * creative is attached to a campaign (FK guard).
+ */
+export async function deleteCreative(c: Creative): Promise<void> {
+  const client = sb();
+  const { error } = await client.from("creatives").delete().eq("id", c.id);
+  if (error) {
+    if (error.code === "23503") throw new Error("This creative is attached to a campaign, so it stays in your library.");
+    throw error;
+  }
+  await client.storage.from("creatives").remove([c.storage_path]).catch(() => {});
 }
 
 export async function signedCreativeUrl(path: string): Promise<string | null> {
@@ -205,6 +392,48 @@ export async function startCheckout(campaignId: string): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
   if (!res.ok || !body.url) throw new Error(body.error || `Checkout failed (${res.status})`);
   return body.url;
+}
+
+/** The signed-in user's role from their profile ("customer" | "admin"). */
+export async function myRole(): Promise<string | null> {
+  const client = sb();
+  const { data: auth } = await client.auth.getUser();
+  if (!auth.user) return null;
+  const { data } = await client.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  return (data?.role as string | undefined) ?? "customer";
+}
+
+export type ReviewItem = Campaign & {
+  creative: Creative | null;
+  screens: { name: string; city: string }[];
+};
+
+/** Admin only: campaigns waiting for creative review. */
+export async function adminReviewQueue(): Promise<ReviewItem[]> {
+  const { data, error } = await sb()
+    .from("campaigns")
+    .select("*, creatives(*), campaign_screens(screens(name, city))")
+    .eq("status", "pending_review")
+    .order("paid_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((c) => ({
+    ...(c as unknown as Campaign),
+    total_usd: Number(c.total_usd),
+    creative: (c.creatives as Creative | null) ?? null,
+    screens: ((c.campaign_screens as { screens: { name: string; city: string } }[] | null) ?? [])
+      .map((cs) => cs.screens)
+      .filter(Boolean),
+  }));
+}
+
+export async function approveCampaign(id: string): Promise<void> {
+  const { error } = await sb().rpc("approve_campaign", { cid: id });
+  if (error) throw error;
+}
+
+export async function rejectCreative(id: string, reason: string): Promise<void> {
+  const { error } = await sb().rpc("reject_creative", { cid: id, reason });
+  if (error) throw error;
 }
 
 export function daysBetween(start: string, end: string): number {
